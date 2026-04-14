@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Cortex</title>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+<style>
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  background: #111827;
+  color: white;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+
+#chat-container {
+  width: 430px;
+  max-width: 95%;
+  background: #1f2937;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.35);
+}
+
+.header {
+  background: #374151;
+  padding: 14px;
+  text-align: center;
+  font-weight: bold;
+  font-size: 20px;
+}
+
+#messages {
+  list-style: none;
+  margin: 0;
+  padding: 16px;
+  height: 420px;
+  overflow-y: auto;
+}
+
+#messages li {
+  display: flex;
+  margin-bottom: 12px;
+  animation: fadeIn 0.18s ease;
+}
+
+.mine {
+  justify-content: flex-end;
+}
+
+.other {
+  justify-content: flex-start;
+}
+
+.bubble {
+  max-width: 75%;
+  padding: 10px 12px;
+  border-radius: 18px;
+  line-height: 1.35;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.15);
+}
+
+.mine .bubble {
+  background: #2563eb;
+}
+
+.other .bubble {
+  background: #4b5563;
+}
+
+.name {
+  font-size: 12px;
+  font-weight: bold;
+  margin-bottom: 4px;
+  opacity: 0.85;
+}
+
+.text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.time {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-top: 6px;
+  text-align: right;
+}
+
+.message-image {
+  max-width: 220px;
+  border-radius: 12px;
+  margin-top: 6px;
+  cursor: zoom-in;
+  display: block;
+}
+
+.input-row {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  background: #374151;
+  align-items: center;
+}
+
+#m {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 10px;
+  outline: none;
+}
+
+button,
+label.upload-btn {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+  border: none;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+button:hover,
+label.upload-btn:hover {
+  background: #1d4ed8;
+  transform: translateY(-1px);
+}
+
+#imageInput {
+  display: none;
+}
+
+.image-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.9);
+  justify-content: center;
+  align-items: center;
+  z-index: 999;
+}
+
+.image-modal img {
+  max-width: 90%;
+  max-height: 90%;
+  border-radius: 12px;
+  cursor: zoom-out;
+}
+
+#typingIndicator {
+  min-height: 20px;
+  padding: 0 16px 10px 16px;
+  font-size: 13px;
+  color: #cbd5e1;
+  background: #1f2937;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+</style>
+</head>
+
+<body>
+
+<div id="chat-container">
+  <div class="header">Cortex</div>
+
+  <ul id="messages"></ul>
+  <div id="typingIndicator"></div>
+
+  <div class="input-row">
+    <label for="imageInput" class="upload-btn">Photo</label>
+    <input type="file" id="imageInput" accept="image/*" />
+    <input id="m" placeholder="Type a message..." />
+    <button id="sendBtn">Send</button>
+  </div>
+</div>
+
+<div id="imageModal" class="image-modal">
+  <img id="modalImage" />
+</div>
+
+<script>
+const socket = io();
+const messages = document.getElementById('messages');
+const input = document.getElementById('m');
+const sendBtn = document.getElementById('sendBtn');
+const imageInput = document.getElementById('imageInput');
+const typingIndicator = document.getElementById('typingIndicator');
+
+let username = prompt("Enter your username") || "Guest";
+let mySocketId = null;
+let remoteTypingTimeout = null;
+
+socket.on('connect', () => {
+  mySocketId = socket.id;
+});
+
+function formatTime(timestamp) {
+  const date = new Date(timestamp);
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function sendMessage() {
+  const text = input.value.trim();
+  if (!text) return;
+
+  socket.emit('chat_message', {
+    user: username,
+    type: 'text',
+    text: text,
+    senderId: mySocketId,
+    timestamp: Date.now()
+  });
+
+  input.value = '';
+}
+
+sendBtn.onclick = sendMessage;
+
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    sendMessage();
+  } else {
+    socket.emit('typing', { user: username });
+  }
+});
+
+input.addEventListener('input', () => {
+  socket.emit('typing', { user: username });
+});
+
+async function uploadImage(file) {
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const res = await fetch('/upload', {
+    method: 'POST',
+    body: formData
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    alert(data.error || "Upload failed");
+    return;
+  }
+
+  socket.emit('chat_message', {
+    user: username,
+    type: 'image',
+    url: data.url,
+    senderId: mySocketId,
+    timestamp: Date.now()
+  });
+}
+
+imageInput.addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file) uploadImage(file);
+});
+
+function addTextMessage(user, text, isMine, timestamp) {
+  const li = document.createElement('li');
+  li.className = isMine ? 'mine' : 'other';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+
+  const name = document.createElement('div');
+  name.className = 'name';
+  name.textContent = user;
+
+  const body = document.createElement('div');
+  body.className = 'text';
+  body.textContent = text;
+
+  const time = document.createElement('div');
+  time.className = 'time';
+  time.textContent = formatTime(timestamp || Date.now());
+
+  bubble.appendChild(name);
+  bubble.appendChild(body);
+  bubble.appendChild(time);
+
+  li.appendChild(bubble);
+  messages.appendChild(li);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function addImageMessage(user, url, isMine, timestamp) {
+  const li = document.createElement('li');
+  li.className = isMine ? 'mine' : 'other';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+
+  const name = document.createElement('div');
+  name.className = 'name';
+  name.textContent = user;
+
+  const img = document.createElement('img');
+  img.src = url;
+  img.className = 'message-image';
+
+  img.onclick = () => {
+    modalImage.src = url;
+    imageModal.style.display = 'flex';
+  };
+
+  const time = document.createElement('div');
+  time.className = 'time';
+  time.textContent = formatTime(timestamp || Date.now());
+
+  bubble.appendChild(name);
+  bubble.appendChild(img);
+  bubble.appendChild(time);
+
+  li.appendChild(bubble);
+  messages.appendChild(li);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+socket.on('chat_message', msg => {
+  const isMine = msg.senderId === mySocketId;
+
+  if (msg.type === 'text') {
+    addTextMessage(msg.user, msg.text, isMine, msg.timestamp);
+  } else if (msg.type === 'image') {
+    addImageMessage(msg.user, msg.url, isMine, msg.timestamp);
+  }
+
+  typingIndicator.textContent = '';
+});
+
+socket.on('typing', data => {
+  if (!data || !data.user) return;
+
+  typingIndicator.textContent = `${data.user} is typing...`;
+
+  clearTimeout(remoteTypingTimeout);
+  remoteTypingTimeout = setTimeout(() => {
+    typingIndicator.textContent = '';
+  }, 1200);
+});
+
+const imageModal = document.getElementById('imageModal');
+const modalImage = document.getElementById('modalImage');
+
+imageModal.onclick = () => {
+  imageModal.style.display = 'none';
+};
+</script>
+
+</body>
+</html>
