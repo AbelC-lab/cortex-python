@@ -36,6 +36,44 @@ body {
   font-size: 20px;
 }
 
+.name-row {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+#usernameInput {
+  width: 150px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #4b5563;
+  border-radius: 8px;
+  background: #111827;
+  color: white;
+  outline: none;
+}
+
+#usernameInput::placeholder {
+  color: #9ca3af;
+}
+
+#usernameInput:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.18);
+}
+
+#setNameBtn {
+  padding: 8px 12px;
+  background: #059669;
+  font-size: 13px;
+  font-weight: bold;
+}
+
+#setNameBtn:hover {
+  background: #047857;
+}
+
 #messages {
   list-style: none;
   margin: 0;
@@ -173,13 +211,33 @@ label.upload-btn:hover {
     transform: translateY(0);
   }
 }
+
+@media (max-width: 520px) {
+  .header {
+    text-align: left;
+  }
+
+  .name-row {
+    justify-content: flex-start;
+  }
+
+  #usernameInput {
+    width: min(150px, 100%);
+  }
+}
 </style>
 </head>
 
 <body>
 
 <div id="chat-container">
-  <div class="header">Cortex</div>
+  <div class="header">
+    <div>Cortex</div>
+    <div class="name-row">
+      <input id="usernameInput" type="text" autocomplete="name" placeholder="Name" />
+      <button id="setNameBtn" type="button">Set</button>
+    </div>
+  </div>
 
   <ul id="messages"></ul>
   <div id="typingIndicator"></div>
@@ -203,8 +261,20 @@ const input = document.getElementById('m');
 const sendBtn = document.getElementById('sendBtn');
 const imageInput = document.getElementById('imageInput');
 const typingIndicator = document.getElementById('typingIndicator');
+const usernameInput = document.getElementById('usernameInput');
+const setNameBtn = document.getElementById('setNameBtn');
 
-let username = prompt("Enter your username") || "Guest";
+let username = localStorage.getItem('cortex_username') || 'Guest';
+usernameInput.value = username;
+
+setNameBtn.addEventListener('click', () => {
+  const newName = usernameInput.value.trim();
+  if (!newName) return;
+
+  username = newName;
+  localStorage.setItem('cortex_username', username);
+});
+
 let mySocketId = null;
 let remoteTypingTimeout = null;
 

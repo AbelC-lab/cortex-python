@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cortex Agent Login</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      background: #111827;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .login-panel {
+      width: 420px;
+      max-width: 100%;
+      background: #1f2937;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }
+
+    .header {
+      background: #374151;
+      padding: 16px;
+      font-size: 20px;
+      font-weight: bold;
+      text-align: center;
+    }
+
+    form {
+      padding: 18px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      color: #cbd5e1;
+      font-size: 14px;
+    }
+
+    input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #4b5563;
+      border-radius: 8px;
+      background: #111827;
+      color: white;
+      outline: none;
+      font-size: 16px;
+      margin-bottom: 12px;
+    }
+
+    input:focus {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.18);
+    }
+
+    button {
+      width: 100%;
+      padding: 12px 16px;
+      border: none;
+      border-radius: 8px;
+      background: #2563eb;
+      color: white;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: bold;
+    }
+
+    button:hover {
+      background: #1d4ed8;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    .error {
+      display: none;
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: rgba(220, 38, 38, 0.14);
+      border: 1px solid rgba(248, 113, 113, 0.35);
+      color: #fecaca;
+      font-size: 14px;
+    }
+
+    .error.visible {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <main class="login-panel">
+    <div class="header">Cortex Agent Login</div>
+    <form method="post" action="{{ url_for('agent_login') }}">
+      <div class="error{% if error %} visible{% endif %}" role="alert">{{ error or "" }}</div>
+
+      <label for="username">Username</label>
+      <input
+        id="username"
+        name="username"
+        type="text"
+        autocomplete="username"
+        value="{{ username or '' }}"
+        required
+      />
+
+      <label for="password">Password</label>
+      <input
+        id="password"
+        name="password"
+        type="password"
+        autocomplete="current-password"
+        required
+      />
+      <button type="submit">
+        Login
+      </button>
+    </form>
+  </main>
+</body>
+</html>

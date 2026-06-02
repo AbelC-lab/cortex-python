@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cortex Support</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #111827;
+      color: white;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 16px;
+    }
+
+    #chat-container {
+      width: 460px;
+      max-width: 100%;
+      background: #1f2937;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    }
+
+    .header {
+      background: #374151;
+      padding: 14px;
+      position: relative;
+      text-align: center;
+      font-weight: bold;
+      font-size: 20px;
+    }
+
+    .header-title {
+      padding: 0 104px;
+    }
+
+    .name-row {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 10px;
+      padding: 0 104px;
+    }
+
+    #usernameInput {
+      width: 150px;
+      min-width: 0;
+      padding: 8px 10px;
+      border: 1px solid #4b5563;
+      border-radius: 8px;
+      background: #111827;
+      color: white;
+      outline: none;
+    }
+
+    #usernameInput::placeholder {
+      color: #9ca3af;
+    }
+
+    #usernameInput:focus {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.18);
+    }
+
+    #setNameBtn {
+      padding: 8px 12px;
+      background: #059669;
+      font-size: 13px;
+      font-weight: bold;
+    }
+
+    #setNameBtn:hover {
+      background: #047857;
+    }
+
+    .session-label {
+      margin-top: 4px;
+      color: #cbd5e1;
+      font-size: 12px;
+      font-weight: normal;
+    }
+
+    .join-gate {
+      padding: 18px;
+      background: #1f2937;
+      border-bottom: 1px solid #374151;
+    }
+
+    .join-gate[hidden],
+    .chat-area[hidden] {
+      display: none;
+    }
+
+    .join-title {
+      margin-bottom: 6px;
+      font-size: 18px;
+      font-weight: bold;
+    }
+
+    .join-copy {
+      margin-bottom: 14px;
+      color: #cbd5e1;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    .join-form {
+      display: grid;
+      gap: 10px;
+    }
+
+    .join-form label {
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
+    .join-form input {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #4b5563;
+      border-radius: 8px;
+      background: #111827;
+      color: white;
+      outline: none;
+    }
+
+    .join-form input:focus {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.18);
+    }
+
+    #requestAccessBtn {
+      margin-top: 4px;
+      background: #059669;
+    }
+
+    #requestAccessBtn:hover {
+      background: #047857;
+    }
+
+    #joinStatus {
+      min-height: 20px;
+      margin-top: 12px;
+      color: #cbd5e1;
+      font-size: 14px;
+    }
+
+    #joinStatus.error {
+      color: #fecaca;
+    }
+
+    #closeChatBtn {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      padding: 8px 10px;
+      background: #dc2626;
+      font-size: 13px;
+      font-weight: bold;
+    }
+
+    #closeChatBtn:hover {
+      background: #b91c1c;
+    }
+
+    #messages {
+      list-style: none;
+      margin: 0;
+      padding: 16px;
+      height: 420px;
+      overflow-y: auto;
+    }
+
+    #messages li {
+      display: flex;
+      flex-direction: column;
+      margin-bottom: 12px;
+    }
+
+    .bubble {
+      max-width: 82%;
+      padding: 10px 12px;
+      background: #4b5563;
+      border-radius: 14px;
+      word-wrap: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .own {
+      align-items: flex-end;
+    }
+
+    .own .bubble {
+      background: #2563eb;
+    }
+
+    .system-message {
+      align-items: center;
+    }
+
+    .system-message .bubble {
+      max-width: 92%;
+      background: #111827;
+      border: 1px solid #4b5563;
+      color: #e5e7eb;
+      text-align: center;
+    }
+
+    .meta {
+      color: #cbd5e1;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .message-text {
+      line-height: 1.35;
+      white-space: pre-wrap;
+    }
+
+    #messages img {
+      max-width: 220px;
+      width: 100%;
+      border-radius: 10px;
+      margin-top: 6px;
+      display: block;
+    }
+
+    #typingIndicator {
+      min-height: 18px;
+      padding: 0 16px 10px;
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 8px;
+      padding: 12px;
+      background: #374151;
+      align-items: center;
+    }
+
+    #m {
+      flex: 1;
+      min-width: 0;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      outline: none;
+    }
+
+    button,
+    label.upload-btn {
+      padding: 10px 14px;
+      border: none;
+      border-radius: 8px;
+      background: #2563eb;
+      color: white;
+      cursor: pointer;
+      display: inline-block;
+      font-size: 14px;
+      white-space: nowrap;
+    }
+
+    button:hover,
+    label.upload-btn:hover {
+      background: #1d4ed8;
+    }
+
+    button:disabled,
+    label.upload-btn.disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    label.upload-btn.disabled {
+      pointer-events: none;
+    }
+
+    #imageInput {
+      display: none;
+    }
+
+    .image-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      justify-content: center;
+      align-items: center;
+      z-index: 999;
+      padding: 20px;
+    }
+
+    .image-modal img {
+      max-width: 90%;
+      max-height: 90%;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      cursor: zoom-out;
+    }
+
+    .clickable-image {
+      cursor: zoom-in;
+    }
+
+    @media (max-width: 520px) {
+      body {
+        padding: 0;
+      }
+
+      #chat-container {
+        min-height: 100vh;
+        border-radius: 0;
+      }
+
+      #messages {
+        height: calc(100vh - 198px);
+      }
+
+      .input-row {
+        gap: 6px;
+      }
+
+      button,
+      label.upload-btn {
+        padding: 10px;
+      }
+
+      .header-title {
+        padding: 0 92px 0 0;
+        text-align: left;
+      }
+
+      .name-row {
+        justify-content: flex-start;
+        padding: 0 92px 0 0;
+      }
+
+      #usernameInput {
+        width: min(150px, 100%);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="chat-container">
+    <div class="header">
+      <div class="header-title">
+        Cortex Support
+        <div class="session-label">Session {{ session_id }}</div>
+      </div>
+      <div class="name-row">
+        <input id="usernameInput" type="text" autocomplete="name" placeholder="Name" />
+        <button id="setNameBtn" type="button">Set</button>
+      </div>
+      <button id="closeChatBtn" type="button">Close Chat</button>
+    </div>
+    <div id="joinGate" class="join-gate" hidden>
+      <div class="join-title">Request Access</div>
+      <div class="join-copy">Enter your details and wait for the agent to approve this private support chat.</div>
+      <div class="join-form">
+        <label for="customerName">Name</label>
+        <input id="customerName" type="text" autocomplete="name" placeholder="Name" required />
+
+        <label for="customerEmail">Email</label>
+        <input id="customerEmail" type="email" autocomplete="email" placeholder="you@example.com" required />
+
+        <button id="requestAccessBtn" type="button">Request Access</button>
+      </div>
+      <div id="joinStatus"></div>
+    </div>
+    <div id="chatArea" class="chat-area">
+      <ul id="messages"></ul>
+      <div id="typingIndicator"></div>
+      <div class="input-row">
+        <label for="imageInput" id="uploadLabel" class="upload-btn">Photo</label>
+        <input type="file" id="imageInput" accept="image/*" />
+        <input id="m" autocomplete="off" placeholder="Type a message..." />
+        <button id="sendBtn">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="imageModal" class="image-modal">
+    <img id="modalImage" src="" alt="Expanded image" />
+  </div>
+
+  <script>
+    const sessionId = {{ session_id|tojson }};
+    const initiallyClosed = {{ chat_closed|default(false)|tojson }};
+    const requiresApproval = {{ requires_approval|default(false)|tojson }};
+    const socket = io();
+    const joinGate = document.getElementById('joinGate');
+    const chatArea = document.getElementById('chatArea');
+    const customerName = document.getElementById('customerName');
+    const customerEmail = document.getElementById('customerEmail');
+    const requestAccessBtn = document.getElementById('requestAccessBtn');
+    const joinStatus = document.getElementById('joinStatus');
+    const messages = document.getElementById('messages');
+    const input = document.getElementById('m');
+    const sendBtn = document.getElementById('sendBtn');
+    const imageInput = document.getElementById('imageInput');
+    const uploadLabel = document.getElementById('uploadLabel');
+    const imageModal = document.getElementById('imageModal');
+    const typingIndicator = document.getElementById('typingIndicator');
+    const closeChatBtn = document.getElementById('closeChatBtn');
+    const usernameInput = document.getElementById('usernameInput');
+    const setNameBtn = document.getElementById('setNameBtn');
+
+    let typingTimer;
+    let chatClosed = initiallyClosed;
+    let chatReady = !requiresApproval;
+    let username = localStorage.getItem('cortex_username') || 'Guest';
+    usernameInput.value = username;
+    customerName.value = username;
+
+    setNameBtn.addEventListener('click', () => {
+      const newName = usernameInput.value.trim();
+      if (!newName) return;
+
+      username = newName;
+      localStorage.setItem('cortex_username', username);
+      customerName.value = username;
+    });
+
+    socket.on('connect', () => {
+      if (chatReady) {
+        socket.emit('join_room', { session_id: sessionId });
+      }
+    });
+
+    function formatTimestamp(timestamp) {
+      const date = timestamp ? new Date(timestamp) : new Date();
+      return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
+
+    function createMessageShell(user, timestamp) {
+      const li = document.createElement('li');
+      if (user === username) {
+        li.classList.add('own');
+      }
+
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `${user} - ${formatTimestamp(timestamp)}`;
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+
+      li.appendChild(meta);
+      li.appendChild(bubble);
+
+      return { li, bubble };
+    }
+
+    function addSystemMessage(text) {
+      const li = document.createElement('li');
+      li.className = 'system-message';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = text;
+
+      li.appendChild(bubble);
+      messages.appendChild(li);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function setJoinStatus(text, isError = false) {
+      joinStatus.textContent = text;
+      joinStatus.classList.toggle('error', isError);
+    }
+
+    function setChatControls(enabled) {
+      input.disabled = !enabled || chatClosed;
+      sendBtn.disabled = !enabled || chatClosed;
+      imageInput.disabled = !enabled || chatClosed;
+      closeChatBtn.disabled = !enabled || chatClosed;
+      uploadLabel.classList.toggle('disabled', !enabled || chatClosed);
+      uploadLabel.setAttribute('aria-disabled', String(!enabled || chatClosed));
+    }
+
+    function showJoinGate() {
+      joinGate.hidden = false;
+      chatArea.hidden = true;
+      setChatControls(false);
+      setJoinStatus('');
+    }
+
+    function showChat() {
+      joinGate.hidden = true;
+      chatArea.hidden = false;
+      setChatControls(true);
+    }
+
+    function addTextMessage(user, text, timestamp) {
+      const { li, bubble } = createMessageShell(user, timestamp);
+      const messageText = document.createElement('div');
+      messageText.className = 'message-text';
+      messageText.textContent = text;
+
+      bubble.appendChild(messageText);
+      messages.appendChild(li);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function addImageMessage(user, url, timestamp) {
+      const { li, bubble } = createMessageShell(user, timestamp);
+
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = 'Uploaded image';
+      img.classList.add('clickable-image');
+
+      img.addEventListener('click', () => {
+        const modalImage = document.getElementById('modalImage');
+        modalImage.src = url;
+        imageModal.style.display = 'flex';
+      });
+
+      bubble.appendChild(img);
+      messages.appendChild(li);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function messagePayload(payload) {
+      return {
+        ...payload,
+        user: username,
+        session_id: sessionId,
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    function sendMessage() {
+      if (chatClosed || !chatReady) return;
+
+      const text = input.value.trim();
+      if (!text) return;
+
+      socket.emit('chat_message', messagePayload({
+        type: 'text',
+        text: text
+      }));
+
+      input.value = '';
+      typingIndicator.textContent = '';
+      socket.emit('typing', { session_id: sessionId, user: username, typing: false });
+    }
+
+    async function uploadImage(file) {
+      if (chatClosed || !chatReady) return;
+
+      const formData = new FormData();
+      formData.append('image', file);
+
+      const response = await fetch('/upload', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Upload failed');
+      }
+
+      socket.emit('chat_message', messagePayload({
+        type: 'image',
+        url: data.url
+      }));
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendMessage();
+    });
+
+    input.addEventListener('input', () => {
+      if (chatClosed || !chatReady) return;
+
+      socket.emit('typing', { session_id: sessionId, user: username, typing: true });
+      clearTimeout(typingTimer);
+      typingTimer = setTimeout(() => {
+        socket.emit('typing', { session_id: sessionId, user: username, typing: false });
+      }, 900);
+    });
+
+    imageInput.addEventListener('change', async (e) => {
+      if (chatClosed || !chatReady) {
+        imageInput.value = '';
+        return;
+      }
+
+      const file = e.target.files[0];
+      if (!file) return;
+
+      try {
+        await uploadImage(file);
+      } catch (err) {
+        console.error('Upload failed:', err);
+        alert('Image upload failed: ' + err.message);
+      }
+
+      imageInput.value = '';
+    });
+
+    closeChatBtn.addEventListener('click', () => {
+      if (chatClosed || !chatReady) return;
+
+      socket.emit('close_session', {
+        room: sessionId,
+        user: username
+      });
+    });
+
+    requestAccessBtn.addEventListener('click', () => {
+      const name = customerName.value.trim();
+      const email = customerEmail.value.trim();
+      if (!name || !email) {
+        setJoinStatus('Name and email are required.', true);
+        return;
+      }
+
+      username = name;
+      usernameInput.value = username;
+      localStorage.setItem('cortex_username', username);
+      requestAccessBtn.disabled = true;
+      setJoinStatus('Waiting for agent approval...');
+      socket.emit('request_join', {
+        room: sessionId,
+        name,
+        email
+      });
+    });
+
+    function closeChat(closedBy) {
+      if (chatClosed) return;
+
+      chatClosed = true;
+      addSystemMessage(`Chat closed by ${closedBy || 'User'}`);
+      typingIndicator.textContent = '';
+      input.value = '';
+      input.placeholder = 'This chat has been closed';
+      input.disabled = true;
+      sendBtn.disabled = true;
+      imageInput.disabled = true;
+      uploadLabel.classList.add('disabled');
+      uploadLabel.setAttribute('aria-disabled', 'true');
+      closeChatBtn.disabled = true;
+    }
+
+    socket.on('chat_message', (msg) => {
+      if (!msg || typeof msg !== 'object' || msg.session_id !== sessionId) return;
+
+      if (msg.type === 'text' && typeof msg.text === 'string') {
+        addTextMessage(msg.user || 'User', msg.text, msg.timestamp);
+      } else if (msg.type === 'image' && typeof msg.url === 'string') {
+        addImageMessage(msg.user || 'User', msg.url, msg.timestamp);
+      } else if (msg.type === 'system' && typeof msg.text === 'string') {
+        addSystemMessage(msg.text);
+      }
+    });
+
+    socket.on('typing', (data) => {
+      if (chatClosed || !data || data.session_id !== sessionId || data.user === username) return;
+
+      typingIndicator.textContent = data.typing ? `${data.user || 'Someone'} is typing...` : '';
+    });
+
+    socket.on('session_closed', (data) => {
+      if (!data || data.room !== sessionId) return;
+
+      closeChat(data.closed_by);
+    });
+
+    socket.on('session_error', (data) => {
+      alert((data && data.error) || 'Unable to join this support session.');
+    });
+
+    socket.on('session_pending', (data) => {
+      if (!data || data.room !== sessionId) return;
+
+      chatReady = false;
+      showJoinGate();
+      setJoinStatus(data.text || 'Agent approval is required before joining this chat.');
+    });
+
+    socket.on('join_pending', (data) => {
+      if (!data || data.room !== sessionId) return;
+
+      setJoinStatus(data.text || 'Waiting for agent approval...');
+    });
+
+    socket.on('join_approved', (data) => {
+      if (!data || data.room !== sessionId) return;
+
+      chatReady = true;
+      showChat();
+      addSystemMessage('Access approved. You can now chat.');
+    });
+
+    socket.on('join_rejected', (data) => {
+      if (data && data.room && data.room !== sessionId) return;
+
+      chatReady = false;
+      showJoinGate();
+      requestAccessBtn.disabled = false;
+      setJoinStatus((data && data.text) || 'Your request was not approved.', true);
+    });
+
+    imageModal.addEventListener('click', () => {
+      imageModal.style.display = 'none';
+    });
+
+    if (chatClosed) {
+      chatClosed = false;
+      closeChat('Support');
+    } else if (requiresApproval) {
+      showJoinGate();
+    } else {
+      showChat();
+    }
+  </script>
+</body>
+</html>

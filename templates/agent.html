@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cortex Agent</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      background: #111827;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .agent-panel {
+      width: 460px;
+      max-width: 100%;
+      background: #1f2937;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }
+
+    .header {
+      background: #374151;
+      padding: 16px;
+      position: relative;
+      font-size: 20px;
+      font-weight: bold;
+      text-align: center;
+    }
+
+    .logout-link {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      color: #bfdbfe;
+      font-size: 14px;
+      font-weight: normal;
+      text-decoration: none;
+    }
+
+    .logout-link:hover {
+      color: #dbeafe;
+      text-decoration: underline;
+    }
+
+    .agent-meta {
+      margin-top: 4px;
+      color: #cbd5e1;
+      font-size: 13px;
+      font-weight: normal;
+    }
+
+    .content {
+      padding: 18px;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px 16px;
+      border: none;
+      border-radius: 8px;
+      background: #2563eb;
+      color: white;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: bold;
+    }
+
+    button:hover {
+      background: #1d4ed8;
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.72;
+    }
+
+    .result {
+      display: none;
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 8px;
+      background: #374151;
+    }
+
+    .result.visible {
+      display: block;
+    }
+
+    .section-title {
+      margin: 18px 0 8px;
+      color: #cbd5e1;
+      font-size: 13px;
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+
+    .request-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .request-empty {
+      padding: 12px;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      color: #cbd5e1;
+      font-size: 14px;
+      text-align: center;
+    }
+
+    .request-item {
+      padding: 12px;
+      border-radius: 8px;
+      background: #374151;
+    }
+
+    .request-name {
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+
+    .request-meta {
+      color: #cbd5e1;
+      font-size: 13px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .request-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .approve-btn,
+    .reject-btn {
+      width: auto;
+      flex: 1;
+      padding: 9px 12px;
+      font-size: 14px;
+    }
+
+    .approve-btn {
+      background: #059669;
+    }
+
+    .approve-btn:hover {
+      background: #047857;
+    }
+
+    .reject-btn {
+      background: #dc2626;
+    }
+
+    .reject-btn:hover {
+      background: #b91c1c;
+    }
+
+    .result-label {
+      color: #cbd5e1;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    .link-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    #sessionLink {
+      flex: 1;
+      min-width: 0;
+      color: #bfdbfe;
+      overflow-wrap: anywhere;
+    }
+
+    .copy-btn,
+    .open-btn {
+      width: auto;
+      flex: 0 0 auto;
+      padding: 9px 12px;
+      font-size: 14px;
+      font-weight: normal;
+      text-decoration: none;
+      border-radius: 8px;
+      color: white;
+      background: #2563eb;
+      border: none;
+    }
+
+    .open-btn {
+      display: inline-block;
+    }
+
+    .error {
+      min-height: 20px;
+      margin-top: 12px;
+      color: #fecaca;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <main class="agent-panel">
+    <div class="header">
+      Cortex Agent
+      {% if agent_username %}
+        <div class="agent-meta">Signed in as {{ agent_username }}</div>
+      {% endif %}
+      <a class="logout-link" href="/agent/logout">Logout</a>
+    </div>
+    <div class="content">
+      <button id="createSession">Create Session</button>
+
+      <div id="result" class="result">
+        <div class="result-label">Customer link</div>
+        <div class="link-row">
+          <a id="sessionLink" href=""></a>
+          <button id="copyLink" class="copy-btn">Copy</button>
+          <a id="openLink" class="open-btn" href="">Open</a>
+        </div>
+      </div>
+
+      <div class="section-title">Pending Access Requests</div>
+      <div id="requestList" class="request-list">
+        <div class="request-empty">No pending requests</div>
+      </div>
+
+      <div id="error" class="error"></div>
+    </div>
+  </main>
+
+  <script>
+    const createButton = document.getElementById('createSession');
+    const result = document.getElementById('result');
+    const sessionLink = document.getElementById('sessionLink');
+    const openLink = document.getElementById('openLink');
+    const copyLink = document.getElementById('copyLink');
+    const requestList = document.getElementById('requestList');
+    const error = document.getElementById('error');
+    const agentUsername = {{ agent_username|default('', true)|tojson }};
+    const supportSocket = io();
+    const pendingRequests = new Map();
+
+    supportSocket.on('connect', () => {
+      supportSocket.emit('agent_authenticate', {
+        username: agentUsername
+      });
+    });
+
+    supportSocket.on('agent_authenticated', () => {
+      supportSocket.emit('agent_ready');
+    });
+
+    supportSocket.on('pending_join_requests', (data) => {
+      pendingRequests.clear();
+      if (data && Array.isArray(data.requests)) {
+        data.requests.forEach(addPendingRequest);
+      }
+      renderRequests();
+    });
+
+    supportSocket.on('join_request', (request) => {
+      addPendingRequest(request);
+      renderRequests();
+    });
+
+    supportSocket.on('join_request_removed', (request) => {
+      if (!request) return;
+
+      pendingRequests.delete(requestKey(request));
+      renderRequests();
+    });
+
+    supportSocket.on('agent_error', (data) => {
+      error.textContent = (data && data.error) || 'Unable to process agent request';
+    });
+
+    createButton.addEventListener('click', async () => {
+      createButton.disabled = true;
+      error.textContent = '';
+
+      try {
+        const response = await fetch('/create-session', { method: 'POST' });
+        if (response.redirected) {
+          window.location.href = response.url;
+          return;
+        }
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Unable to create session');
+        }
+
+        const absoluteLink = new URL(data.link, window.location.origin).href;
+        sessionLink.href = absoluteLink;
+        sessionLink.textContent = absoluteLink;
+        openLink.href = absoluteLink;
+        result.classList.add('visible');
+      } catch (err) {
+        error.textContent = err.message;
+      } finally {
+        createButton.disabled = false;
+      }
+    });
+
+    copyLink.addEventListener('click', async () => {
+      if (!sessionLink.href) return;
+
+      await navigator.clipboard.writeText(sessionLink.href);
+      copyLink.textContent = 'Copied';
+      setTimeout(() => {
+        copyLink.textContent = 'Copy';
+      }, 1200);
+    });
+
+    function addPendingRequest(request) {
+      if (!request || !request.room || !request.customerSocketId) return;
+
+      pendingRequests.set(requestKey(request), request);
+    }
+
+    function requestKey(request) {
+      return `${request.room}:${request.customerSocketId}`;
+    }
+
+    function renderRequests() {
+      requestList.textContent = '';
+
+      if (!pendingRequests.size) {
+        const empty = document.createElement('div');
+        empty.className = 'request-empty';
+        empty.textContent = 'No pending requests';
+        requestList.appendChild(empty);
+        return;
+      }
+
+      pendingRequests.forEach((request) => {
+        const item = document.createElement('div');
+        item.className = 'request-item';
+
+        const name = document.createElement('div');
+        name.className = 'request-name';
+        name.textContent = request.name || 'Guest';
+
+        const meta = document.createElement('div');
+        meta.className = 'request-meta';
+        meta.textContent = `Email: ${request.email || 'Not provided'} | Session: ${request.room}`;
+
+        const actions = document.createElement('div');
+        actions.className = 'request-actions';
+
+        const approve = document.createElement('button');
+        approve.className = 'approve-btn';
+        approve.type = 'button';
+        approve.textContent = 'Approve';
+        approve.addEventListener('click', () => {
+          supportSocket.emit('approve_join', {
+            room: request.room,
+            customerSocketId: request.customerSocketId
+          });
+        });
+
+        const reject = document.createElement('button');
+        reject.className = 'reject-btn';
+        reject.type = 'button';
+        reject.textContent = 'Reject';
+        reject.addEventListener('click', () => {
+          supportSocket.emit('reject_join', {
+            room: request.room,
+            customerSocketId: request.customerSocketId
+          });
+        });
+
+        actions.appendChild(approve);
+        actions.appendChild(reject);
+        item.appendChild(name);
+        item.appendChild(meta);
+        item.appendChild(actions);
+        requestList.appendChild(item);
+      });
+    }
+  </script>
+</body>
+</html>
