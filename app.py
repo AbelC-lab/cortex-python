@@ -39,6 +39,7 @@ sid_sessions = {}
 pending_join_requests = {}
 approved_customer_sids = {}
 approved_customer_by_room = {}
+approved_customer_tokens = {}
 authenticated_agent_sids = set()
 
 
@@ -261,11 +262,21 @@ def handle_approve_join(data):
 
     remove_pending_request(customer_sid)
     socket_join_room(room, sid=customer_sid)
+    customer_token = secrets.token_urlsafe(32)
     sid_sessions[customer_sid] = room
     approved_customer_sids[customer_sid] = room
     approved_customer_by_room[room] = customer_sid
+    approved_customer_tokens[room] = {
+        "token": customer_token,
+        "sid": customer_sid,
+        "name": join_request["name"],
+        "email": join_request["email"],
+    }
 
-    emit("join_approved", {"room": room}, to=customer_sid)
+    emit("join_approved", {
+        "room": room,
+        "customerToken": customer_token,
+    }, to=customer_sid)
     emit("join_request_removed", {
         "room": room,
         "customerSocketId": customer_sid
@@ -299,6 +310,45 @@ def handle_reject_join(data):
         "room": room,
         "customerSocketId": customer_sid
     }, to=AGENT_DASHBOARD_ROOM)
+
+
+@socketio.on("rejoin_session")
+def handle_rejoin_session(data):
+    room = get_room_from_payload(data)
+    token = data.get("token") if isinstance(data, dict) else None
+
+    if not room or room == DEFAULT_SESSION_ID:
+        emit("rejoin_denied", {
+            "room": room,
+            "clearToken": True,
+            "text": "This support session is not available."
+        })
+        return
+
+    if room in closed_sessions:
+        emit("rejoin_denied", {
+            "room": room,
+            "clearToken": True,
+            "text": "This chat has been closed."
+        })
+        return
+
+    if not validate_customer_token(room, token):
+        emit("rejoin_denied", {
+            "room": room,
+            "clearToken": True,
+            "text": "Your saved approval has expired. Please request access again."
+        })
+        return
+
+    remove_pending_request(request.sid)
+    socket_join_room(room)
+    sid_sessions[request.sid] = room
+    approved_customer_sids[request.sid] = room
+    approved_customer_by_room[room] = request.sid
+    approved_customer_tokens[room]["sid"] = request.sid
+
+    emit("rejoin_approved", {"room": room})
 
 
 @socketio.on("chat_message")
@@ -368,7 +418,10 @@ def handle_disconnect():
     remove_pending_request(request.sid)
     approved_room = approved_customer_sids.pop(request.sid, None)
     if approved_room and approved_customer_by_room.get(approved_room) == request.sid:
-        approved_customer_by_room.pop(approved_room, None)
+        approved_customer_by_room[approved_room] = None
+    approved_customer = approved_customer_tokens.get(approved_room)
+    if approved_customer and approved_customer.get("sid") == request.sid:
+        approved_customer["sid"] = None
     authenticated_agent_sids.discard(request.sid)
     sid_sessions.pop(request.sid, None)
 
@@ -407,6 +460,17 @@ def can_access_room(sid, room):
         return True
 
     return approved_customer_sids.get(sid) == room
+
+
+def validate_customer_token(room, token):
+    if not isinstance(token, str) or not token:
+        return False
+
+    approved_customer = approved_customer_tokens.get(room)
+    if not approved_customer:
+        return False
+
+    return secrets.compare_digest(token, approved_customer["token"])
 
 
 def authenticate_agent_socket(username=None):

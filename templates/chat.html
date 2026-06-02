@@ -417,13 +417,18 @@
     const closeChatBtn = document.getElementById('closeChatBtn');
     const usernameInput = document.getElementById('usernameInput');
     const setNameBtn = document.getElementById('setNameBtn');
+    const customerTokenKey = 'cortex_customer_token_' + sessionId;
+    const customerNameKey = 'cortex_customer_name_' + sessionId;
+    const customerEmailKey = 'cortex_customer_email_' + sessionId;
+    const customerSessionKey = 'cortex_customer_session_' + sessionId;
 
     let typingTimer;
     let chatClosed = initiallyClosed;
     let chatReady = !requiresApproval;
-    let username = localStorage.getItem('cortex_username') || 'Guest';
+    let username = localStorage.getItem(customerNameKey) || localStorage.getItem('cortex_username') || 'Guest';
     usernameInput.value = username;
     customerName.value = username;
+    customerEmail.value = localStorage.getItem(customerEmailKey) || '';
 
     setNameBtn.addEventListener('click', () => {
       const newName = usernameInput.value.trim();
@@ -431,10 +436,25 @@
 
       username = newName;
       localStorage.setItem('cortex_username', username);
+      localStorage.setItem(customerNameKey, username);
       customerName.value = username;
     });
 
     socket.on('connect', () => {
+      if (chatClosed) return;
+
+      const savedToken = getSavedCustomerToken();
+      if (requiresApproval && savedToken) {
+        chatReady = false;
+        showChat();
+        setChatControls(false);
+        socket.emit('rejoin_session', {
+          room: sessionId,
+          token: savedToken
+        });
+        return;
+      }
+
       if (chatReady) {
         socket.emit('join_room', { session_id: sessionId });
       }
@@ -480,6 +500,25 @@
     function setJoinStatus(text, isError = false) {
       joinStatus.textContent = text;
       joinStatus.classList.toggle('error', isError);
+    }
+
+    function getSavedCustomerToken() {
+      return localStorage.getItem(customerTokenKey);
+    }
+
+    function saveCustomerApproval(token) {
+      if (!token) return;
+
+      localStorage.setItem(customerTokenKey, token);
+      localStorage.setItem(customerNameKey, username);
+      localStorage.setItem(customerEmailKey, customerEmail.value.trim());
+      localStorage.setItem(customerSessionKey, sessionId);
+      localStorage.setItem('cortex_username', username);
+    }
+
+    function clearSavedCustomerApproval() {
+      localStorage.removeItem(customerTokenKey);
+      localStorage.removeItem(customerSessionKey);
     }
 
     function setChatControls(enabled) {
@@ -637,6 +676,8 @@
       username = name;
       usernameInput.value = username;
       localStorage.setItem('cortex_username', username);
+      localStorage.setItem(customerNameKey, username);
+      localStorage.setItem(customerEmailKey, email);
       requestAccessBtn.disabled = true;
       setJoinStatus('Waiting for agent approval...');
       socket.emit('request_join', {
@@ -650,6 +691,7 @@
       if (chatClosed) return;
 
       chatClosed = true;
+      clearSavedCustomerApproval();
       addSystemMessage(`Chat closed by ${closedBy || 'User'}`);
       typingIndicator.textContent = '';
       input.value = '';
@@ -707,9 +749,31 @@
     socket.on('join_approved', (data) => {
       if (!data || data.room !== sessionId) return;
 
+      saveCustomerApproval(data.customerToken);
       chatReady = true;
       showChat();
       addSystemMessage('Access approved. You can now chat.');
+    });
+
+    socket.on('rejoin_approved', (data) => {
+      if (!data || data.room !== sessionId) return;
+
+      chatReady = true;
+      showChat();
+      addSystemMessage('Rejoined approved chat.');
+    });
+
+    socket.on('rejoin_denied', (data) => {
+      if (data && data.room && data.room !== sessionId) return;
+
+      if (!data || data.clearToken !== false) {
+        clearSavedCustomerApproval();
+      }
+
+      chatReady = false;
+      showJoinGate();
+      requestAccessBtn.disabled = false;
+      setJoinStatus((data && data.text) || 'Please request access to join this chat.', true);
     });
 
     socket.on('join_rejected', (data) => {
@@ -728,6 +792,9 @@
     if (chatClosed) {
       chatClosed = false;
       closeChat('Support');
+    } else if (requiresApproval && getSavedCustomerToken()) {
+      showChat();
+      setChatControls(false);
     } else if (requiresApproval) {
       showJoinGate();
     } else {
