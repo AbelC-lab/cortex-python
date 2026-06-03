@@ -6,6 +6,7 @@ from functools import wraps
 
 from flask import (
     Flask,
+    Response,
     abort,
     jsonify,
     redirect,
@@ -41,6 +42,7 @@ approved_customer_sids = {}
 approved_customer_by_room = {}
 approved_customer_tokens = {}
 authenticated_agent_sids = set()
+chat_transcripts = {}
 
 
 def require_agent_login(view):
@@ -61,6 +63,7 @@ def index():
         session_id=DEFAULT_SESSION_ID,
         chat_closed=DEFAULT_SESSION_ID in closed_sessions,
         requires_approval=False,
+        is_agent=bool(session.get("agent_logged_in")),
     )
 
 
@@ -131,6 +134,23 @@ def chat_session(session_id):
         session_id=session_id,
         chat_closed=session_id in closed_sessions,
         requires_approval=not session.get("agent_logged_in"),
+        is_agent=bool(session.get("agent_logged_in")),
+    )
+
+
+@app.route("/download-transcript/<session_id>")
+@require_agent_login
+def download_transcript(session_id):
+    if session_id not in active_sessions:
+        abort(404)
+
+    transcript = build_transcript(session_id)
+    return Response(
+        transcript,
+        mimetype="text/plain",
+        headers={
+            "Content-Disposition": f"attachment; filename=transcript_{session_id}.txt"
+        },
     )
 
 
@@ -281,13 +301,12 @@ def handle_approve_join(data):
         "room": room,
         "customerSocketId": customer_sid
     }, to=AGENT_DASHBOARD_ROOM)
-    emit("chat_message", {
-        "session_id": room,
-        "type": "system",
-        "user": "System",
-        "text": "Customer approved and joined the chat.",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-    }, to=room)
+    system_message = make_system_message(
+        room,
+        "Customer approved and joined the chat.",
+    )
+    append_transcript_message(room, system_message)
+    emit("chat_message", system_message, to=room)
 
 
 @socketio.on("reject_join")
@@ -302,6 +321,10 @@ def handle_reject_join(data):
         return
 
     remove_pending_request(customer_sid)
+    append_transcript_message(
+        room,
+        make_system_message(room, f"Customer rejected: {join_request['name']}."),
+    )
     emit("join_rejected", {
         "room": room,
         "text": "Your request was not approved."
@@ -349,6 +372,9 @@ def handle_rejoin_session(data):
     approved_customer_tokens[room]["sid"] = request.sid
 
     emit("rejoin_approved", {"room": room})
+    system_message = make_system_message(room, "Customer rejoined the chat.")
+    append_transcript_message(room, system_message)
+    emit("chat_message", system_message, to=room)
 
 
 @socketio.on("chat_message")
@@ -357,6 +383,7 @@ def handle_chat_message(msg):
     if not room or room in closed_sessions:
         return
 
+    append_transcript_message(room, msg)
     emit("chat_message", msg, to=room)
 
 
@@ -406,6 +433,10 @@ def handle_close_session(data):
         user = data["user"].strip()
 
     closed_sessions.add(room)
+    append_transcript_message(
+        room,
+        make_system_message(room, f"Chat closed by {user}."),
+    )
     emit("session_closed", {
         "room": room,
         "closed_by": user,
@@ -460,6 +491,81 @@ def can_access_room(sid, room):
         return True
 
     return approved_customer_sids.get(sid) == room
+
+
+def make_system_message(room, text):
+    return {
+        "session_id": room,
+        "type": "system",
+        "user": "System",
+        "text": text,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+def append_transcript_message(room, message):
+    if room not in active_sessions or not isinstance(message, dict):
+        return
+
+    message_type = message.get("type")
+    if message_type not in {"text", "image", "system"}:
+        return
+
+    entry = {
+        "type": message_type,
+        "user": clean_customer_field(message.get("user"), "User"),
+        "timestamp": message.get("timestamp") or datetime.utcnow().isoformat() + "Z",
+    }
+
+    if message_type in {"text", "system"}:
+        text = message.get("text")
+        if not isinstance(text, str) or not text.strip():
+            return
+        entry["text"] = text.strip()
+    elif message_type == "image":
+        url = message.get("url")
+        if not isinstance(url, str) or not url.strip():
+            return
+        entry["url"] = url.strip()
+
+    chat_transcripts.setdefault(room, []).append(entry)
+
+
+def build_transcript(room):
+    saved_at = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+    lines = [
+        "Cortex Chat Transcript",
+        f"Session: {room}",
+        f"Saved: {saved_at}",
+        "",
+        "--------------------------------",
+        "",
+    ]
+
+    for entry in chat_transcripts.get(room, []):
+        timestamp = format_transcript_timestamp(entry.get("timestamp"))
+        user = entry.get("user") or "User"
+        lines.append(f"[{timestamp}] {user}:")
+
+        if entry.get("type") == "image":
+            lines.append(f"[Image uploaded: {entry.get('url', '')}]")
+        else:
+            lines.append(entry.get("text", ""))
+
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def format_transcript_timestamp(value):
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.strftime("%I:%M %p").lstrip("0")
+        except ValueError:
+            return value
+
+    return datetime.utcnow().strftime("%I:%M %p").lstrip("0")
 
 
 def validate_customer_token(room, token):

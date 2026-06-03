@@ -173,6 +173,28 @@
       background: #b91c1c;
     }
 
+    #saveTranscriptBtn {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      padding: 8px 10px;
+      background: #059669;
+      font-size: 13px;
+      font-weight: bold;
+    }
+
+    #saveTranscriptBtn:hover {
+      background: #047857;
+    }
+
+    .agent-header .header-title {
+      padding: 34px 0 0;
+    }
+
+    .agent-header .name-row {
+      padding: 0;
+    }
+
     #messages {
       list-style: none;
       margin: 0;
@@ -350,12 +372,21 @@
       #usernameInput {
         width: min(150px, 100%);
       }
+
+      .agent-header .header-title {
+        padding-top: 38px;
+        text-align: center;
+      }
+
+      .agent-header .name-row {
+        justify-content: center;
+      }
     }
   </style>
 </head>
 <body>
   <div id="chat-container">
-    <div class="header">
+    <div class="header{% if is_agent|default(false) %} agent-header{% endif %}">
       <div class="header-title">
         Cortex Support
         <div class="session-label">Session {{ session_id }}</div>
@@ -364,6 +395,9 @@
         <input id="usernameInput" type="text" autocomplete="name" placeholder="Name" />
         <button id="setNameBtn" type="button">Set</button>
       </div>
+      {% if is_agent|default(false) %}
+      <button id="saveTranscriptBtn" type="button">Save Transcript</button>
+      {% endif %}
       <button id="closeChatBtn" type="button">Close Chat</button>
     </div>
     <div id="joinGate" class="join-gate" hidden>
@@ -400,6 +434,7 @@
     const sessionId = {{ session_id|tojson }};
     const initiallyClosed = {{ chat_closed|default(false)|tojson }};
     const requiresApproval = {{ requires_approval|default(false)|tojson }};
+    const isAgent = {{ is_agent|default(false)|tojson }};
     const socket = io();
     const joinGate = document.getElementById('joinGate');
     const chatArea = document.getElementById('chatArea');
@@ -415,6 +450,7 @@
     const imageModal = document.getElementById('imageModal');
     const typingIndicator = document.getElementById('typingIndicator');
     const closeChatBtn = document.getElementById('closeChatBtn');
+    const saveTranscriptBtn = document.getElementById('saveTranscriptBtn');
     const usernameInput = document.getElementById('usernameInput');
     const setNameBtn = document.getElementById('setNameBtn');
     const customerTokenKey = 'cortex_customer_token_' + sessionId;
@@ -665,6 +701,12 @@
       });
     });
 
+    if (isAgent && saveTranscriptBtn) {
+      saveTranscriptBtn.addEventListener('click', () => {
+        window.location.href = '/download-transcript/' + encodeURIComponent(sessionId);
+      });
+    }
+
     requestAccessBtn.addEventListener('click', () => {
       const name = customerName.value.trim();
       const email = customerEmail.value.trim();
@@ -760,7 +802,6 @@
 
       chatReady = true;
       showChat();
-      addSystemMessage('Rejoined approved chat.');
     });
 
     socket.on('rejoin_denied', (data) => {
