@@ -34,6 +34,7 @@ AGENT_PASSWORD = os.environ.get("AGENT_PASSWORD", "test")
 socketio = SocketIO(app, cors_allowed_origins="*")
 DEFAULT_SESSION_ID = "lobby"
 AGENT_DASHBOARD_ROOM = "agent_dashboard"
+ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
 active_sessions = {DEFAULT_SESSION_ID}
 closed_sessions = set()
 session_records = {}
@@ -186,18 +187,12 @@ def api_session_messages(session_id):
 
 @app.route("/upload", methods=["POST"])
 def upload():
-    file = request.files.get("image")
+    return save_uploaded_image("image")
 
-    if not file:
-        return jsonify({"error": "No file uploaded"}), 400
 
-    filename = f"{int(time.time())}_{secure_filename(file.filename)}"
-    filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    file.save(filepath)
-
-    return jsonify({
-        "url": f"/static/uploads/{filename}"
-    })
+@app.route("/upload-profile", methods=["POST"])
+def upload_profile():
+    return save_uploaded_image("image")
 
 
 @socketio.on("agent_ready")
@@ -301,6 +296,7 @@ def handle_request_join(data):
 
     name = clean_customer_field(data.get("name") if isinstance(data, dict) else None, "Guest")
     email = clean_customer_field(data.get("email") if isinstance(data, dict) else None, "")
+    profile_pic = clean_profile_pic(data.get("profilePic") if isinstance(data, dict) else None)
     if not email:
         emit("join_rejected", {
             "room": room,
@@ -313,12 +309,14 @@ def handle_request_join(data):
         "sid": request.sid,
         "name": name,
         "email": email,
+        "profilePic": profile_pic,
     }
     pending_join_requests.setdefault(room, []).append(join_request)
     session_record = ensure_session_record(room)
     session_record.update({
         "customer_name": name,
         "customer_email": email,
+        "customer_profile_pic": profile_pic,
         "status": "waiting",
         "customer_socket_id": request.sid,
         "last_message": "Waiting for approval",
@@ -379,11 +377,13 @@ def handle_approve_join(data):
         "sid": customer_sid,
         "name": join_request["name"],
         "email": join_request["email"],
+        "profilePic": join_request.get("profilePic", ""),
     }
     session_record = ensure_session_record(room)
     session_record.update({
         "customer_name": join_request["name"],
         "customer_email": join_request["email"],
+        "customer_profile_pic": join_request.get("profilePic", ""),
         "status": "active",
         "agent_name": session.get("agent_username", ""),
         "joined_at": utc_now_iso(),
@@ -394,6 +394,7 @@ def handle_approve_join(data):
     emit("join_approved", {
         "room": room,
         "customerToken": customer_token,
+        "profilePic": join_request.get("profilePic", ""),
     }, to=customer_sid)
     emit("join_request_removed", {
         "room": room,
@@ -428,6 +429,7 @@ def handle_reject_join(data):
     session_record.update({
         "customer_name": join_request["name"],
         "customer_email": join_request["email"],
+        "customer_profile_pic": join_request.get("profilePic", ""),
         "status": "closed",
         "agent_name": session.get("agent_username", ""),
         "customer_socket_id": None,
@@ -482,9 +484,14 @@ def handle_rejoin_session(data):
     approved_customer_by_room[room] = request.sid
     approved_customer_tokens[room]["sid"] = request.sid
     session_record = ensure_session_record(room)
+    profile_pic = clean_profile_pic(data.get("profilePic") if isinstance(data, dict) else None)
+    if profile_pic:
+        session_record["customer_profile_pic"] = profile_pic
+        approved_customer_tokens[room]["profilePic"] = profile_pic
     session_record.update({
         "status": "active",
         "customer_socket_id": request.sid,
+        "customer_profile_pic": session_record.get("customer_profile_pic", ""),
     })
 
     emit("rejoin_approved", {"room": room})
@@ -605,6 +612,32 @@ def get_message_room(data):
     return None
 
 
+def save_uploaded_image(field_name):
+    file = request.files.get(field_name)
+
+    if not file:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    if not allowed_image_file(file.filename):
+        return jsonify({"error": "Only png, jpg, jpeg, gif, and webp images are allowed"}), 400
+
+    filename = f"{int(time.time())}_{secrets.token_hex(4)}_{secure_filename(file.filename)}"
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    file.save(filepath)
+
+    return jsonify({
+        "url": f"/static/uploads/{filename}"
+    })
+
+
+def allowed_image_file(filename):
+    if not isinstance(filename, str) or "." not in filename:
+        return False
+
+    extension = filename.rsplit(".", 1)[1].lower()
+    return extension in ALLOWED_IMAGE_EXTENSIONS
+
+
 def can_access_room(sid, room):
     if room not in active_sessions:
         return False
@@ -640,6 +673,7 @@ def append_transcript_message(room, message, increment_unread=False):
         "type": message_type,
         "user": clean_customer_field(message.get("user"), "User"),
         "timestamp": message.get("timestamp") or datetime.utcnow().isoformat() + "Z",
+        "profilePic": clean_profile_pic(message.get("profilePic")),
     }
 
     if message_type in {"text", "system"}:
@@ -666,6 +700,7 @@ def ensure_session_record(session_id, agent_name=""):
         "session_id": session_id,
         "customer_name": "",
         "customer_email": "",
+        "customer_profile_pic": "",
         "status": "waiting",
         "agent_name": agent_name,
         "created_at": now,
@@ -711,6 +746,8 @@ def serialize_session(session_id):
         "session_id": session_record["session_id"],
         "customer_name": session_record.get("customer_name") or "Waiting for customer",
         "customer_email": session_record.get("customer_email", ""),
+        "profilePic": session_record.get("customer_profile_pic", ""),
+        "customer_profile_pic": session_record.get("customer_profile_pic", ""),
         "status": "closed" if session_id in closed_sessions else session_record.get("status", "waiting"),
         "agent_name": session_record.get("agent_name", ""),
         "created_at": session_record.get("created_at"),
@@ -728,6 +765,7 @@ def serialize_message(message, session_id):
         "session_id": session_id,
         "type": message.get("type", "text"),
         "user": message.get("user", "User"),
+        "profilePic": message.get("profilePic", ""),
         "text": message.get("text", ""),
         "url": message.get("url", ""),
         "timestamp": message.get("timestamp") or utc_now_iso(),
@@ -817,12 +855,28 @@ def clean_customer_field(value, fallback):
     return fallback
 
 
+def clean_profile_pic(value):
+    if not isinstance(value, str) or not value.strip():
+        return ""
+
+    profile_pic = value.strip()
+    if not profile_pic.startswith("/static/uploads/"):
+        return ""
+
+    filename = profile_pic.rsplit("/", 1)[-1]
+    if not allowed_image_file(filename):
+        return ""
+
+    return profile_pic[:240]
+
+
 def request_payload(room, join_request):
     return {
         "room": room,
         "customerSocketId": join_request["sid"],
         "name": join_request["name"],
         "email": join_request["email"],
+        "profilePic": join_request.get("profilePic", ""),
     }
 
 

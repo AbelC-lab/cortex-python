@@ -118,6 +118,63 @@
       margin-bottom: 14px;
     }
 
+    .agent-profile {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .agent-profile label {
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: var(--soft);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    #agentProfileInput {
+      display: none;
+    }
+
+    .avatar {
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #dbeafe, #dcfce7);
+      color: #1f2937;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      font-size: 14px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 50%;
+    }
+
+    .avatar.small {
+      width: 36px;
+      height: 36px;
+      flex-basis: 36px;
+      font-size: 13px;
+    }
+
+    .avatar.large {
+      width: 44px;
+      height: 44px;
+      flex-basis: 44px;
+      font-size: 15px;
+    }
+
     .create-row {
       display: flex;
       gap: 8px;
@@ -222,6 +279,18 @@
       gap: 8px;
     }
 
+    .session-main {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .session-copy {
+      min-width: 0;
+      flex: 1;
+    }
+
     .session-name {
       min-width: 0;
       overflow: hidden;
@@ -301,9 +370,16 @@
 
     .conversation-title {
       min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
     }
 
-    .conversation-title h2 {
+    .conversation-copy {
+      min-width: 0;
+    }
+
+    .conversation-copy h2 {
       margin: 0;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -312,7 +388,7 @@
       letter-spacing: 0;
     }
 
-    .conversation-title p {
+    .conversation-copy p {
       margin: 4px 0 0;
       color: var(--muted);
       font-size: 13px;
@@ -340,8 +416,18 @@
       margin-bottom: 14px;
     }
 
+    .message-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 9px;
+    }
+
     .message.agent {
       align-items: flex-end;
+    }
+
+    .message.agent .message-row {
+      flex-direction: row-reverse;
     }
 
     .message.system {
@@ -450,6 +536,16 @@
     .details-header h2 {
       margin: 0 0 4px;
       font-size: 20px;
+    }
+
+    .detail-heading {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .detail-heading-copy {
+      min-width: 0;
     }
 
     .details-header p {
@@ -573,6 +669,11 @@
         {% if agent_username %}
           <div class="agent-name">Signed in as {{ agent_username }}</div>
         {% endif %}
+        <div class="agent-profile">
+          <div id="agentAvatar" class="avatar small"></div>
+          <label for="agentProfileInput">Set Photo</label>
+          <input id="agentProfileInput" type="file" accept="image/*" />
+        </div>
         <div class="create-row">
           <button id="createSession" type="button">Create Session</button>
         </div>
@@ -604,8 +705,11 @@
     <section class="conversation">
       <header class="conversation-header">
         <div class="conversation-title">
-          <h2 id="conversationName">Select a conversation</h2>
-          <p id="conversationMeta">No session selected</p>
+          <div id="conversationAvatar" class="avatar large"></div>
+          <div class="conversation-copy">
+            <h2 id="conversationName">Select a conversation</h2>
+            <p id="conversationMeta">No session selected</p>
+          </div>
         </div>
         <span id="conversationStatus" class="status-pill status-waiting">Waiting</span>
       </header>
@@ -623,8 +727,13 @@
 
     <aside class="details">
       <div class="details-header">
-        <h2>Customer Details</h2>
-        <p id="detailSummary">No session selected</p>
+        <div class="detail-heading">
+          <div id="detailAvatar" class="avatar large"></div>
+          <div class="detail-heading-copy">
+            <h2>Customer Details</h2>
+            <p id="detailSummary">No session selected</p>
+          </div>
+        </div>
       </div>
       <div class="details-body">
         <div class="detail-block">
@@ -671,9 +780,11 @@
     const socket = io();
     const sessions = new Map();
     const messagesBySession = new Map();
+    const agentProfilePicKey = 'cortex_agent_profile_pic';
 
     let selectedSessionId = null;
     let typingTimer = null;
+    let agentProfilePic = localStorage.getItem(agentProfilePicKey) || '';
 
     const waitingList = document.getElementById('waitingList');
     const activeList = document.getElementById('activeList');
@@ -683,6 +794,9 @@
     const sessionLink = document.getElementById('sessionLink');
     const openLink = document.getElementById('openLink');
     const copyLink = document.getElementById('copyLink');
+    const agentAvatar = document.getElementById('agentAvatar');
+    const agentProfileInput = document.getElementById('agentProfileInput');
+    const conversationAvatar = document.getElementById('conversationAvatar');
     const conversationName = document.getElementById('conversationName');
     const conversationMeta = document.getElementById('conversationMeta');
     const conversationStatus = document.getElementById('conversationStatus');
@@ -700,6 +814,7 @@
     const imageModal = document.getElementById('imageModal');
     const modalImage = document.getElementById('modalImage');
 
+    const detailAvatar = document.getElementById('detailAvatar');
     const detailSummary = document.getElementById('detailSummary');
     const detailName = document.getElementById('detailName');
     const detailEmail = document.getElementById('detailEmail');
@@ -777,6 +892,7 @@
 
     createSessionBtn.addEventListener('click', createSession);
     copyLink.addEventListener('click', copyCustomerLink);
+    agentProfileInput.addEventListener('change', setAgentProfilePicture);
     sendMessageBtn.addEventListener('click', sendTextMessage);
     approveBtn.addEventListener('click', approveSelected);
     rejectBtn.addEventListener('click', rejectSelected);
@@ -887,6 +1003,64 @@
       }, 1200);
     }
 
+    async function setAgentProfilePicture() {
+      const file = agentProfileInput.files[0];
+      if (!file) return;
+
+      try {
+        const formData = new FormData();
+        formData.append('image', file);
+        const response = await fetch('/upload-profile', {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Profile picture upload failed');
+        }
+
+        agentProfilePic = data.url;
+        localStorage.setItem(agentProfilePicKey, agentProfilePic);
+        renderAvatar(agentAvatar, agentUsername || 'Agent', agentProfilePic);
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        agentProfileInput.value = '';
+      }
+    }
+
+    function createAvatar(name, profilePic, size = 'small') {
+      const avatar = document.createElement('div');
+      avatar.className = `avatar ${size}`;
+      renderAvatar(avatar, name, profilePic);
+      return avatar;
+    }
+
+    function renderAvatar(container, name, profilePic) {
+      container.textContent = '';
+
+      if (profilePic) {
+        const image = document.createElement('img');
+        image.src = profilePic;
+        image.alt = `${name || 'User'} avatar`;
+        container.appendChild(image);
+        return;
+      }
+
+      container.textContent = initialsFor(name || 'User');
+    }
+
+    function initialsFor(name) {
+      return String(name || 'User')
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((part) => part.charAt(0))
+        .join('')
+        .toUpperCase() || 'U';
+    }
+
     function renderSessions() {
       renderSessionGroup(waitingList, 'waiting');
       renderSessionGroup(activeList, 'active');
@@ -924,20 +1098,37 @@
       const topLine = document.createElement('div');
       topLine.className = 'session-topline';
 
+      const main = document.createElement('div');
+      main.className = 'session-main';
+
+      const avatar = createAvatar(
+        session.customer_name || 'Waiting for customer',
+        session.profilePic || session.customer_profile_pic || '',
+        'small'
+      );
+
+      const copy = document.createElement('div');
+      copy.className = 'session-copy';
+
       const name = document.createElement('div');
       name.className = 'session-name';
       name.textContent = session.customer_name || 'Waiting for customer';
+
+      const preview = document.createElement('div');
+      preview.className = 'session-preview';
+      preview.textContent = session.last_message || 'No messages yet';
+
+      copy.appendChild(name);
+      copy.appendChild(preview);
+      main.appendChild(avatar);
+      main.appendChild(copy);
 
       const time = document.createElement('div');
       time.className = 'session-time';
       time.textContent = formatTime(session.updated_at);
 
-      topLine.appendChild(name);
+      topLine.appendChild(main);
       topLine.appendChild(time);
-
-      const preview = document.createElement('div');
-      preview.className = 'session-preview';
-      preview.textContent = session.last_message || 'No messages yet';
 
       const meta = document.createElement('div');
       meta.className = 'session-meta';
@@ -955,7 +1146,6 @@
       }
 
       item.appendChild(topLine);
-      item.appendChild(preview);
       item.appendChild(meta);
       item.addEventListener('click', () => selectSession(session.session_id));
       return item;
@@ -996,10 +1186,12 @@
       const session = getSelectedSession();
 
       if (!session) {
+        renderAvatar(conversationAvatar, 'Select a conversation', '');
         conversationName.textContent = 'Select a conversation';
         conversationMeta.textContent = 'No session selected';
         conversationStatus.textContent = 'Waiting';
         conversationStatus.className = 'status-pill status-waiting';
+        renderAvatar(detailAvatar, 'Customer', '');
         detailSummary.textContent = 'No session selected';
         detailName.textContent = '-';
         detailEmail.textContent = '-';
@@ -1013,6 +1205,9 @@
         return;
       }
 
+      const profilePic = session.profilePic || session.customer_profile_pic || '';
+      renderAvatar(conversationAvatar, session.customer_name || 'Waiting for customer', profilePic);
+      renderAvatar(detailAvatar, session.customer_name || 'Waiting for customer', profilePic);
       conversationName.textContent = session.customer_name || 'Waiting for customer';
       conversationMeta.textContent = session.customer_email || session.session_id;
       conversationStatus.textContent = session.status;
@@ -1089,8 +1284,19 @@
         bubble.textContent = message.text || '';
       }
 
+      const row = document.createElement('div');
+      row.className = 'message-row';
+      if (!isSystem) {
+        row.appendChild(createAvatar(
+          message.user || 'User',
+          message.profilePic || (isAgent ? agentProfilePic : ''),
+          'small'
+        ));
+      }
+      row.appendChild(bubble);
+
       item.appendChild(meta);
-      item.appendChild(bubble);
+      item.appendChild(row);
       return item;
     }
 
@@ -1157,6 +1363,7 @@
         session_id: session.session_id,
         type: 'text',
         user: agentUsername || 'Agent',
+        profilePic: agentProfilePic,
         text,
         timestamp: new Date().toISOString(),
       });
@@ -1190,6 +1397,7 @@
         session_id: session.session_id,
         type: 'image',
         user: agentUsername || 'Agent',
+        profilePic: agentProfilePic,
         url: data.url,
         timestamp: new Date().toISOString(),
       });
@@ -1222,6 +1430,7 @@
       errorEl.textContent = message || '';
     }
 
+    renderAvatar(agentAvatar, agentUsername || 'Agent', agentProfilePic);
     renderSelected();
   </script>
 </body>

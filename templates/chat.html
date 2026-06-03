@@ -209,6 +209,39 @@
       margin-bottom: 12px;
     }
 
+    .message-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+    }
+
+    .own .message-row {
+      flex-direction: row-reverse;
+    }
+
+    .avatar {
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      border-radius: 50%;
+      background: #374151;
+      color: #e5e7eb;
+      display: grid;
+      place-items: center;
+      font-size: 13px;
+      font-weight: bold;
+      overflow: hidden;
+      text-transform: uppercase;
+    }
+
+    .avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 50%;
+      margin: 0;
+    }
+
     .bubble {
       max-width: 82%;
       padding: 10px 12px;
@@ -255,6 +288,12 @@
       border-radius: 10px;
       margin-top: 6px;
       display: block;
+    }
+
+    #messages .avatar img {
+      max-width: none;
+      margin-top: 0;
+      border-radius: 50%;
     }
 
     #typingIndicator {
@@ -410,6 +449,9 @@
         <label for="customerEmail">Email</label>
         <input id="customerEmail" type="email" autocomplete="email" placeholder="you@example.com" required />
 
+        <label for="customerProfilePic">Profile picture</label>
+        <input id="customerProfilePic" type="file" accept="image/*" />
+
         <button id="requestAccessBtn" type="button">Request Access</button>
       </div>
       <div id="joinStatus"></div>
@@ -440,6 +482,7 @@
     const chatArea = document.getElementById('chatArea');
     const customerName = document.getElementById('customerName');
     const customerEmail = document.getElementById('customerEmail');
+    const customerProfilePic = document.getElementById('customerProfilePic');
     const requestAccessBtn = document.getElementById('requestAccessBtn');
     const joinStatus = document.getElementById('joinStatus');
     const messages = document.getElementById('messages');
@@ -456,6 +499,7 @@
     const customerTokenKey = 'cortex_customer_token_' + sessionId;
     const customerNameKey = 'cortex_customer_name_' + sessionId;
     const customerEmailKey = 'cortex_customer_email_' + sessionId;
+    const customerProfilePicKey = 'cortex_customer_profile_pic_' + sessionId;
     const customerSessionKey = 'cortex_customer_session_' + sessionId;
 
     let typingTimer;
@@ -465,6 +509,7 @@
     usernameInput.value = username;
     customerName.value = username;
     customerEmail.value = localStorage.getItem(customerEmailKey) || '';
+    let customerProfilePicUrl = localStorage.getItem(customerProfilePicKey) || '';
 
     setNameBtn.addEventListener('click', () => {
       const newName = usernameInput.value.trim();
@@ -486,7 +531,8 @@
         setChatControls(false);
         socket.emit('rejoin_session', {
           room: sessionId,
-          token: savedToken
+          token: savedToken,
+          profilePic: customerProfilePicUrl
         });
         return;
       }
@@ -501,7 +547,33 @@
       return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     }
 
-    function createMessageShell(user, timestamp) {
+    function createAvatar(user, profilePic) {
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar';
+
+      if (profilePic) {
+        const img = document.createElement('img');
+        img.src = profilePic;
+        img.alt = `${user || 'User'} avatar`;
+        avatar.appendChild(img);
+        return avatar;
+      }
+
+      avatar.textContent = initialsFor(user || 'User');
+      return avatar;
+    }
+
+    function initialsFor(name) {
+      return String(name || 'User')
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((part) => part.charAt(0))
+        .join('')
+        .toUpperCase() || 'U';
+    }
+
+    function createMessageShell(user, timestamp, profilePic) {
       const li = document.createElement('li');
       if (user === username) {
         li.classList.add('own');
@@ -514,8 +586,13 @@
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
 
+      const row = document.createElement('div');
+      row.className = 'message-row';
+      row.appendChild(createAvatar(user, profilePic));
+      row.appendChild(bubble);
+
       li.appendChild(meta);
-      li.appendChild(bubble);
+      li.appendChild(row);
 
       return { li, bubble };
     }
@@ -548,6 +625,7 @@
       localStorage.setItem(customerTokenKey, token);
       localStorage.setItem(customerNameKey, username);
       localStorage.setItem(customerEmailKey, customerEmail.value.trim());
+      localStorage.setItem(customerProfilePicKey, customerProfilePicUrl);
       localStorage.setItem(customerSessionKey, sessionId);
       localStorage.setItem('cortex_username', username);
     }
@@ -579,8 +657,8 @@
       setChatControls(true);
     }
 
-    function addTextMessage(user, text, timestamp) {
-      const { li, bubble } = createMessageShell(user, timestamp);
+    function addTextMessage(user, text, timestamp, profilePic) {
+      const { li, bubble } = createMessageShell(user, timestamp, profilePic);
       const messageText = document.createElement('div');
       messageText.className = 'message-text';
       messageText.textContent = text;
@@ -590,8 +668,8 @@
       messages.scrollTop = messages.scrollHeight;
     }
 
-    function addImageMessage(user, url, timestamp) {
-      const { li, bubble } = createMessageShell(user, timestamp);
+    function addImageMessage(user, url, timestamp, profilePic) {
+      const { li, bubble } = createMessageShell(user, timestamp, profilePic);
 
       const img = document.createElement('img');
       img.src = url;
@@ -613,6 +691,7 @@
       return {
         ...payload,
         user: username,
+        profilePic: customerProfilePicUrl,
         session_id: sessionId,
         timestamp: new Date().toISOString()
       };
@@ -655,6 +734,27 @@
         type: 'image',
         url: data.url
       }));
+    }
+
+    async function uploadProfilePicture(file) {
+      if (!file) return customerProfilePicUrl;
+
+      const formData = new FormData();
+      formData.append('image', file);
+
+      const response = await fetch('/upload-profile', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Profile picture upload failed');
+      }
+
+      customerProfilePicUrl = data.url;
+      localStorage.setItem(customerProfilePicKey, customerProfilePicUrl);
+      return customerProfilePicUrl;
     }
 
     sendBtn.addEventListener('click', sendMessage);
@@ -707,7 +807,7 @@
       });
     }
 
-    requestAccessBtn.addEventListener('click', () => {
+    requestAccessBtn.addEventListener('click', async () => {
       const name = customerName.value.trim();
       const email = customerEmail.value.trim();
       if (!name || !email) {
@@ -721,12 +821,21 @@
       localStorage.setItem(customerNameKey, username);
       localStorage.setItem(customerEmailKey, email);
       requestAccessBtn.disabled = true;
-      setJoinStatus('Waiting for agent approval...');
-      socket.emit('request_join', {
-        room: sessionId,
-        name,
-        email
-      });
+      setJoinStatus('Preparing request...');
+
+      try {
+        await uploadProfilePicture(customerProfilePic.files[0]);
+        setJoinStatus('Waiting for agent approval...');
+        socket.emit('request_join', {
+          room: sessionId,
+          name,
+          email,
+          profilePic: customerProfilePicUrl
+        });
+      } catch (err) {
+        requestAccessBtn.disabled = false;
+        setJoinStatus(err.message, true);
+      }
     });
 
     function closeChat(closedBy) {
@@ -750,9 +859,9 @@
       if (!msg || typeof msg !== 'object' || msg.session_id !== sessionId) return;
 
       if (msg.type === 'text' && typeof msg.text === 'string') {
-        addTextMessage(msg.user || 'User', msg.text, msg.timestamp);
+        addTextMessage(msg.user || 'User', msg.text, msg.timestamp, msg.profilePic || '');
       } else if (msg.type === 'image' && typeof msg.url === 'string') {
-        addImageMessage(msg.user || 'User', msg.url, msg.timestamp);
+        addImageMessage(msg.user || 'User', msg.url, msg.timestamp, msg.profilePic || '');
       } else if (msg.type === 'system' && typeof msg.text === 'string') {
         addSystemMessage(msg.text);
       }
@@ -792,6 +901,10 @@
       if (!data || data.room !== sessionId) return;
 
       saveCustomerApproval(data.customerToken);
+      if (data.profilePic) {
+        customerProfilePicUrl = data.profilePic;
+        localStorage.setItem(customerProfilePicKey, customerProfilePicUrl);
+      }
       chatReady = true;
       showChat();
       addSystemMessage('Access approved. You can now chat.');
