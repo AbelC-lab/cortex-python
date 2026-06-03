@@ -45,6 +45,7 @@ approved_customer_by_room = {}
 approved_customer_tokens = {}
 authenticated_agent_sids = set()
 chat_transcripts = {}
+messages_by_session = chat_transcripts
 
 
 def require_agent_login(view):
@@ -180,7 +181,7 @@ def api_session_messages(session_id):
         "session_id": session_id,
         "messages": [
             serialize_message(message, session_id)
-            for message in chat_transcripts.get(session_id, [])
+            for message in get_session_messages(session_id)
         ]
     })
 
@@ -265,9 +266,10 @@ def handle_agent_join_session(data):
         "session_id": room,
         "messages": [
             serialize_message(message, room)
-            for message in chat_transcripts.get(room, [])
+            for message in get_session_messages(room)
         ]
     })
+    emit_message_history(room)
 
 
 @socketio.on("request_join")
@@ -391,11 +393,6 @@ def handle_approve_join(data):
         "unread_count": 0,
     })
 
-    emit("join_approved", {
-        "room": room,
-        "customerToken": customer_token,
-        "profilePic": join_request.get("profilePic", ""),
-    }, to=customer_sid)
     emit("join_request_removed", {
         "room": room,
         "customerSocketId": customer_sid
@@ -404,7 +401,13 @@ def handle_approve_join(data):
         room,
         "Customer approved and joined the chat.",
     )
-    append_transcript_message(room, system_message)
+    system_message = append_transcript_message(room, system_message)
+    emit_message_history(room, to=customer_sid)
+    emit("join_approved", {
+        "room": room,
+        "customerToken": customer_token,
+        "profilePic": join_request.get("profilePic", ""),
+    }, to=customer_sid)
     emit("chat_message", system_message, to=room)
     emit_session_updated(room)
 
@@ -496,7 +499,8 @@ def handle_rejoin_session(data):
 
     emit("rejoin_approved", {"room": room})
     system_message = make_system_message(room, "Customer rejoined the chat.")
-    append_transcript_message(room, system_message)
+    system_message = append_transcript_message(room, system_message)
+    emit_message_history(room, to=request.sid)
     emit("chat_message", system_message, to=room)
     emit_session_updated(room)
 
@@ -507,8 +511,15 @@ def handle_chat_message(msg):
     if not room or room in closed_sessions:
         return
 
-    append_transcript_message(room, msg, increment_unread=not is_authenticated_agent_socket())
-    emit("chat_message", msg, to=room)
+    stored_message = append_transcript_message(
+        room,
+        msg,
+        increment_unread=not is_authenticated_agent_socket()
+    )
+    if not stored_message:
+        return
+
+    emit("chat_message", stored_message, to=room)
     emit_session_updated(room)
 
 
@@ -528,6 +539,7 @@ def handle_join_room(data):
 
     socket_join_room(room)
     sid_sessions[request.sid] = room
+    emit_message_history(room, to=request.sid)
 
     if room in closed_sessions:
         emit("session_closed", {
@@ -558,7 +570,7 @@ def handle_close_session(data):
         user = data["user"].strip()
 
     closed_sessions.add(room)
-    append_transcript_message(
+    system_message = append_transcript_message(
         room,
         make_system_message(room, f"Chat closed by {user}."),
     )
@@ -573,6 +585,8 @@ def handle_close_session(data):
         "closed_by": user,
         "text": f"Chat closed by {user}."
     }, to=room)
+    if system_message:
+        emit("chat_message", system_message, to=room)
     emit_session_updated(room)
 
 
@@ -663,15 +677,19 @@ def make_system_message(room, text):
 
 def append_transcript_message(room, message, increment_unread=False):
     if room not in active_sessions or not isinstance(message, dict):
-        return
+        return None
 
     message_type = message.get("type")
     if message_type not in {"text", "image", "system"}:
-        return
+        return None
 
     entry = {
+        "id": message.get("id") or secrets.token_urlsafe(12),
+        "room": room,
+        "session_id": room,
         "type": message_type,
         "user": clean_customer_field(message.get("user"), "User"),
+        "role": message.get("role") or message_role(message),
         "timestamp": message.get("timestamp") or datetime.utcnow().isoformat() + "Z",
         "profilePic": clean_profile_pic(message.get("profilePic")),
     }
@@ -679,16 +697,41 @@ def append_transcript_message(room, message, increment_unread=False):
     if message_type in {"text", "system"}:
         text = message.get("text")
         if not isinstance(text, str) or not text.strip():
-            return
+            return None
         entry["text"] = text.strip()
     elif message_type == "image":
         url = message.get("url")
         if not isinstance(url, str) or not url.strip():
-            return
+            return None
         entry["url"] = url.strip()
 
-    chat_transcripts.setdefault(room, []).append(entry)
+    for existing_message in messages_by_session.get(room, []):
+        if existing_message.get("id") == entry["id"]:
+            return serialize_message(existing_message, room)
+
+    messages_by_session.setdefault(room, []).append(entry)
     update_session_from_message(room, entry, increment_unread=increment_unread)
+    return serialize_message(entry, room)
+
+
+def get_session_messages(session_id):
+    return messages_by_session.get(session_id, [])
+
+
+def emit_message_history(room, to=None):
+    payload = {
+        "room": room,
+        "session_id": room,
+        "messages": [
+            serialize_message(message, room)
+            for message in get_session_messages(room)
+        ],
+    }
+
+    if to:
+        emit("message_history", payload, to=to)
+    else:
+        emit("message_history", payload)
 
 
 def ensure_session_record(session_id, agent_name=""):
@@ -761,8 +804,16 @@ def serialize_session(session_id):
 
 
 def serialize_message(message, session_id):
+    message.setdefault("id", secrets.token_urlsafe(12))
+    message.setdefault("room", session_id)
+    message.setdefault("session_id", session_id)
+    message.setdefault("role", message_role(message))
+
     return {
+        "id": message.get("id"),
+        "room": session_id,
         "session_id": session_id,
+        "role": message.get("role"),
         "type": message.get("type", "text"),
         "user": message.get("user", "User"),
         "profilePic": message.get("profilePic", ""),
@@ -777,6 +828,17 @@ def message_preview(message):
         return "Image uploaded"
 
     return (message.get("text") or "").strip()[:140]
+
+
+def message_role(message):
+    if message.get("type") == "system" or message.get("user") == "System":
+        return "system"
+
+    user = str(message.get("user") or "")
+    if user == AGENT_USERNAME or user.lower().startswith("agent"):
+        return "agent"
+
+    return "customer"
 
 
 def utc_now_iso():

@@ -856,8 +856,20 @@
     socket.on('session_messages', (data) => {
       if (!data || !data.session_id || !Array.isArray(data.messages)) return;
 
-      messagesBySession.set(data.session_id, data.messages);
+      messagesBySession.set(data.session_id, normalizeMessages(data.messages));
       if (selectedSessionId === data.session_id) {
+        renderMessages();
+      }
+    });
+
+    socket.on('message_history', (data) => {
+      if (!data || !Array.isArray(data.messages)) return;
+
+      const sessionId = data.session_id || data.room;
+      if (!sessionId) return;
+
+      messagesBySession.set(sessionId, normalizeMessages(data.messages));
+      if (selectedSessionId === sessionId) {
         renderMessages();
       }
     });
@@ -866,7 +878,9 @@
       if (!message || !message.session_id) return;
 
       const sessionMessages = messagesBySession.get(message.session_id) || [];
-      sessionMessages.push(message);
+      if (!sessionMessages.some((existing) => messageId(existing) === messageId(message))) {
+        sessionMessages.push(message);
+      }
       messagesBySession.set(message.session_id, sessionMessages);
 
       if (selectedSessionId === message.session_id) {
@@ -1173,7 +1187,7 @@
           throw new Error(data.error || 'Unable to load messages');
         }
 
-        messagesBySession.set(sessionId, data.messages || []);
+        messagesBySession.set(sessionId, normalizeMessages(data.messages || []));
         if (selectedSessionId === sessionId) {
           renderMessages();
         }
@@ -1248,6 +1262,31 @@
         messagesEl.appendChild(createMessageElement(message));
       });
       messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function normalizeMessages(messages) {
+      const seen = new Set();
+      return messages
+        .slice()
+        .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0))
+        .filter((message) => {
+          const id = messageId(message);
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+    }
+
+    function messageId(message) {
+      if (message && message.id) return message.id;
+
+      return [
+        message && (message.session_id || message.room),
+        message && message.timestamp,
+        message && message.user,
+        message && message.type,
+        message && (message.text || message.url)
+      ].join('|');
     }
 
     function renderEmptyMessages() {

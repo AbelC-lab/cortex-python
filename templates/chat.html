@@ -506,6 +506,7 @@
     let chatClosed = initiallyClosed;
     let chatReady = !requiresApproval;
     let username = localStorage.getItem(customerNameKey) || localStorage.getItem('cortex_username') || 'Guest';
+    const renderedMessageIds = new Set();
     usernameInput.value = username;
     customerName.value = username;
     customerEmail.value = localStorage.getItem(customerEmailKey) || '';
@@ -608,6 +609,35 @@
       li.appendChild(bubble);
       messages.appendChild(li);
       messages.scrollTop = messages.scrollHeight;
+    }
+
+    function messageId(message) {
+      if (message && message.id) return message.id;
+
+      return [
+        message && (message.session_id || message.room),
+        message && message.timestamp,
+        message && message.user,
+        message && message.type,
+        message && (message.text || message.url)
+      ].join('|');
+    }
+
+    function renderMessage(message) {
+      if (!message || typeof message !== 'object') return;
+      if ((message.session_id || message.room) !== sessionId) return;
+
+      const id = messageId(message);
+      if (renderedMessageIds.has(id)) return;
+      renderedMessageIds.add(id);
+
+      if (message.type === 'text' && typeof message.text === 'string') {
+        addTextMessage(message.user || 'User', message.text, message.timestamp, message.profilePic || '');
+      } else if (message.type === 'image' && typeof message.url === 'string') {
+        addImageMessage(message.user || 'User', message.url, message.timestamp, message.profilePic || '');
+      } else if (message.type === 'system' && typeof message.text === 'string') {
+        addSystemMessage(message.text);
+      }
     }
 
     function setJoinStatus(text, isError = false) {
@@ -838,12 +868,14 @@
       }
     });
 
-    function closeChat(closedBy) {
+    function closeChat(closedBy, addLocalMessage = true) {
       if (chatClosed) return;
 
       chatClosed = true;
       clearSavedCustomerApproval();
-      addSystemMessage(`Chat closed by ${closedBy || 'User'}`);
+      if (addLocalMessage) {
+        addSystemMessage(`Chat closed by ${closedBy || 'User'}`);
+      }
       typingIndicator.textContent = '';
       input.value = '';
       input.placeholder = 'This chat has been closed';
@@ -856,15 +888,18 @@
     }
 
     socket.on('chat_message', (msg) => {
-      if (!msg || typeof msg !== 'object' || msg.session_id !== sessionId) return;
+      renderMessage(msg);
+    });
 
-      if (msg.type === 'text' && typeof msg.text === 'string') {
-        addTextMessage(msg.user || 'User', msg.text, msg.timestamp, msg.profilePic || '');
-      } else if (msg.type === 'image' && typeof msg.url === 'string') {
-        addImageMessage(msg.user || 'User', msg.url, msg.timestamp, msg.profilePic || '');
-      } else if (msg.type === 'system' && typeof msg.text === 'string') {
-        addSystemMessage(msg.text);
-      }
+    socket.on('message_history', (data) => {
+      if (!data || (data.room || data.session_id) !== sessionId || !Array.isArray(data.messages)) return;
+
+      messages.textContent = '';
+      renderedMessageIds.clear();
+      data.messages
+        .slice()
+        .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0))
+        .forEach(renderMessage);
     });
 
     socket.on('typing', (data) => {
@@ -876,7 +911,7 @@
     socket.on('session_closed', (data) => {
       if (!data || data.room !== sessionId) return;
 
-      closeChat(data.closed_by);
+      closeChat(data.closed_by, false);
     });
 
     socket.on('session_error', (data) => {
