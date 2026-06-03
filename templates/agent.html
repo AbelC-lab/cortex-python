@@ -3,296 +3,854 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Cortex Agent</title>
+  <title>Cortex Agent Workspace</title>
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <style>
     * {
       box-sizing: border-box;
     }
 
+    :root {
+      color-scheme: light;
+      --bg: #f5f5f7;
+      --panel: rgba(255, 255, 255, 0.82);
+      --panel-solid: #ffffff;
+      --line: #d8dbe2;
+      --text: #1d1d1f;
+      --muted: #6e6e73;
+      --soft: #eef0f4;
+      --blue: #007aff;
+      --green: #34c759;
+      --red: #ff3b30;
+      --amber: #b26a00;
+      --shadow: 0 22px 60px rgba(31, 35, 41, 0.16);
+    }
+
     body {
-      font-family: Arial, sans-serif;
       margin: 0;
       min-height: 100vh;
-      background: #111827;
-      color: white;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at 14% 10%, rgba(0, 122, 255, 0.13), transparent 30%),
+        radial-gradient(circle at 90% 0%, rgba(52, 199, 89, 0.12), transparent 28%),
+        var(--bg);
+      color: var(--text);
     }
 
-    .agent-panel {
-      width: 460px;
-      max-width: 100%;
-      background: #1f2937;
-      border-radius: 12px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-      overflow: hidden;
-    }
-
-    .header {
-      background: #374151;
-      padding: 16px;
-      position: relative;
-      font-size: 20px;
-      font-weight: bold;
-      text-align: center;
-    }
-
-    .logout-link {
-      position: absolute;
-      top: 16px;
-      right: 16px;
-      color: #bfdbfe;
-      font-size: 14px;
-      font-weight: normal;
-      text-decoration: none;
-    }
-
-    .logout-link:hover {
-      color: #dbeafe;
-      text-decoration: underline;
-    }
-
-    .agent-meta {
-      margin-top: 4px;
-      color: #cbd5e1;
-      font-size: 13px;
-      font-weight: normal;
-    }
-
-    .content {
-      padding: 18px;
+    button,
+    input {
+      font: inherit;
     }
 
     button {
-      width: 100%;
-      padding: 12px 16px;
-      border: none;
-      border-radius: 8px;
-      background: #2563eb;
+      border: 0;
+      border-radius: 10px;
+      background: var(--blue);
       color: white;
       cursor: pointer;
-      font-size: 16px;
-      font-weight: bold;
+      font-weight: 650;
+      transition: transform 0.16s ease, opacity 0.16s ease, background 0.16s ease;
     }
 
     button:hover {
-      background: #1d4ed8;
+      transform: translateY(-1px);
     }
 
     button:disabled {
-      cursor: wait;
-      opacity: 0.72;
+      cursor: not-allowed;
+      opacity: 0.45;
+      transform: none;
     }
 
-    .result {
+    .workspace {
+      height: 100vh;
+      display: grid;
+      grid-template-columns: 310px minmax(360px, 1fr) 320px;
+      gap: 1px;
+      background: var(--line);
+      overflow: hidden;
+    }
+
+    .sidebar,
+    .conversation,
+    .details {
+      background: var(--panel);
+      backdrop-filter: blur(24px);
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-header,
+    .details-header {
+      padding: 20px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .app-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .app-title h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    .logout-link {
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+    }
+
+    .agent-name {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 14px;
+    }
+
+    .create-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .create-row button {
+      flex: 1;
+      padding: 10px 12px;
+    }
+
+    .generated-link {
       display: none;
-      margin-top: 16px;
-      padding: 12px;
-      border-radius: 8px;
-      background: #374151;
+      margin-top: 12px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.7);
     }
 
-    .result.visible {
+    .generated-link.visible {
       display: block;
     }
 
-    .section-title {
-      margin: 18px 0 8px;
-      color: #cbd5e1;
+    .generated-link a {
+      display: block;
+      color: var(--blue);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+      text-decoration: none;
+    }
+
+    .link-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .link-actions button,
+    .link-actions a {
+      flex: 1;
+      padding: 8px 10px;
+      border-radius: 9px;
+      background: var(--soft);
+      color: var(--text);
       font-size: 13px;
-      font-weight: bold;
+      font-weight: 650;
+      text-align: center;
+      text-decoration: none;
+    }
+
+    .session-sections {
+      flex: 1;
+      overflow: auto;
+      padding: 12px;
+    }
+
+    .section {
+      margin-bottom: 18px;
+    }
+
+    .section-title {
+      margin: 8px 8px 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
     }
 
-    .request-list {
+    .session-list {
       display: grid;
-      gap: 10px;
+      gap: 8px;
     }
 
-    .request-empty {
+    .empty-list {
       padding: 12px;
-      border: 1px solid #374151;
-      border-radius: 8px;
-      color: #cbd5e1;
-      font-size: 14px;
+      color: var(--muted);
+      font-size: 13px;
       text-align: center;
     }
 
-    .request-item {
+    .session-item {
+      width: 100%;
       padding: 12px;
-      border-radius: 8px;
-      background: #374151;
+      border-radius: 14px;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
     }
 
-    .request-name {
-      font-weight: bold;
-      margin-bottom: 4px;
+    .session-item:hover,
+    .session-item.selected {
+      background: var(--panel-solid);
+      box-shadow: 0 8px 22px rgba(31, 35, 41, 0.08);
     }
 
-    .request-meta {
-      color: #cbd5e1;
-      font-size: 13px;
-      line-height: 1.45;
-      overflow-wrap: anywhere;
-    }
-
-    .request-actions {
+    .session-topline,
+    .session-meta {
       display: flex;
+      align-items: center;
+      justify-content: space-between;
       gap: 8px;
-      margin-top: 10px;
     }
 
-    .approve-btn,
-    .reject-btn {
-      width: auto;
+    .session-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 15px;
+      font-weight: 760;
+    }
+
+    .session-time {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .session-preview {
+      min-width: 0;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .status-pill {
+      flex: 0 0 auto;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 760;
+      text-transform: capitalize;
+    }
+
+    .status-waiting {
+      background: #fff3d6;
+      color: var(--amber);
+    }
+
+    .status-active {
+      background: #dcfce7;
+      color: #15803d;
+    }
+
+    .status-closed {
+      background: #e5e7eb;
+      color: #4b5563;
+    }
+
+    .unread-badge {
+      min-width: 22px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--blue);
+      color: white;
+      font-size: 12px;
+      font-weight: 800;
+      text-align: center;
+    }
+
+    .conversation {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .conversation-header {
+      min-height: 74px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.62);
+    }
+
+    .conversation-title {
+      min-width: 0;
+    }
+
+    .conversation-title h2 {
+      margin: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 21px;
+      letter-spacing: 0;
+    }
+
+    .conversation-title p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .message-list {
       flex: 1;
-      padding: 9px 12px;
-      font-size: 14px;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 22px;
     }
 
-    .approve-btn {
-      background: #059669;
+    .empty-state {
+      height: 100%;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 18px;
+      font-weight: 650;
     }
 
-    .approve-btn:hover {
-      background: #047857;
-    }
-
-    .reject-btn {
-      background: #dc2626;
-    }
-
-    .reject-btn:hover {
-      background: #b91c1c;
-    }
-
-    .result-label {
-      color: #cbd5e1;
-      font-size: 13px;
-      margin-bottom: 8px;
-    }
-
-    .link-row {
+    .message {
       display: flex;
-      gap: 8px;
+      flex-direction: column;
+      margin-bottom: 14px;
+    }
+
+    .message.agent {
+      align-items: flex-end;
+    }
+
+    .message.system {
       align-items: center;
     }
 
-    #sessionLink {
+    .message-meta {
+      margin: 0 0 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .bubble {
+      max-width: min(620px, 82%);
+      padding: 10px 13px;
+      border-radius: 18px;
+      background: var(--panel-solid);
+      color: var(--text);
+      box-shadow: 0 8px 22px rgba(31, 35, 41, 0.07);
+      overflow-wrap: anywhere;
+      line-height: 1.38;
+    }
+
+    .agent .bubble {
+      background: var(--blue);
+      color: white;
+    }
+
+    .system .bubble {
+      max-width: 86%;
+      background: rgba(229, 231, 235, 0.75);
+      color: #4b5563;
+      text-align: center;
+      box-shadow: none;
+    }
+
+    .bubble img {
+      display: block;
+      max-width: 260px;
+      width: 100%;
+      border-radius: 12px;
+      cursor: zoom-in;
+    }
+
+    .typing {
+      min-height: 22px;
+      padding: 0 22px 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .composer {
+      display: flex;
+      gap: 10px;
+      padding: 14px;
+      border-top: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.7);
+    }
+
+    .composer input[type="text"] {
       flex: 1;
       min-width: 0;
-      color: #bfdbfe;
-      overflow-wrap: anywhere;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: white;
+      color: var(--text);
+      outline: none;
     }
 
-    .copy-btn,
-    .open-btn {
-      width: auto;
+    .composer input[type="text"]:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.14);
+    }
+
+    #imageInput {
+      display: none;
+    }
+
+    .upload-label,
+    .send-btn {
       flex: 0 0 auto;
-      padding: 9px 12px;
-      font-size: 14px;
-      font-weight: normal;
-      text-decoration: none;
-      border-radius: 8px;
-      color: white;
-      background: #2563eb;
-      border: none;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: var(--soft);
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 750;
     }
 
-    .open-btn {
-      display: inline-block;
+    .send-btn {
+      background: var(--blue);
+      color: white;
+    }
+
+    .upload-label.disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+
+    .details {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .details-header h2 {
+      margin: 0 0 4px;
+      font-size: 20px;
+    }
+
+    .details-header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .details-body {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 18px;
+    }
+
+    .detail-block {
+      padding: 14px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .detail-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .detail-value {
+      margin-top: 5px;
+      overflow-wrap: anywhere;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .actions {
+      display: grid;
+      gap: 10px;
+      padding: 18px;
+      border-top: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.64);
+    }
+
+    .actions button {
+      padding: 11px 12px;
+    }
+
+    .approve {
+      background: var(--green);
+    }
+
+    .reject,
+    .close {
+      background: var(--red);
+    }
+
+    .secondary {
+      background: var(--soft);
+      color: var(--text);
     }
 
     .error {
-      min-height: 20px;
-      margin-top: 12px;
-      color: #fecaca;
-      font-size: 14px;
+      min-height: 18px;
+      color: var(--red);
+      font-size: 13px;
+    }
+
+    .image-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(0, 0, 0, 0.78);
+    }
+
+    .image-modal img {
+      max-width: min(960px, 92vw);
+      max-height: 90vh;
+      border-radius: 18px;
+      cursor: zoom-out;
+    }
+
+    @media (max-width: 1040px) {
+      .workspace {
+        grid-template-columns: 280px 1fr;
+      }
+
+      .details {
+        display: none;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .workspace {
+        height: auto;
+        min-height: 100vh;
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        min-height: 42vh;
+      }
+
+      .conversation {
+        min-height: 58vh;
+      }
     }
   </style>
 </head>
 <body>
-  <main class="agent-panel">
-    <div class="header">
-      Cortex Agent
-      {% if agent_username %}
-        <div class="agent-meta">Signed in as {{ agent_username }}</div>
-      {% endif %}
-      <a class="logout-link" href="/agent/logout">Logout</a>
-    </div>
-    <div class="content">
-      <button id="createSession">Create Session</button>
-
-      <div id="result" class="result">
-        <div class="result-label">Customer link</div>
-        <div class="link-row">
+  <main class="workspace">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="app-title">
+          <h1>Cortex</h1>
+          <a class="logout-link" href="/agent/logout">Logout</a>
+        </div>
+        {% if agent_username %}
+          <div class="agent-name">Signed in as {{ agent_username }}</div>
+        {% endif %}
+        <div class="create-row">
+          <button id="createSession" type="button">Create Session</button>
+        </div>
+        <div id="generatedLink" class="generated-link">
           <a id="sessionLink" href=""></a>
-          <button id="copyLink" class="copy-btn">Copy</button>
-          <a id="openLink" class="open-btn" href="">Open</a>
+          <div class="link-actions">
+            <button id="copyLink" type="button">Copy</button>
+            <a id="openLink" href="" target="_blank" rel="noreferrer">Open</a>
+          </div>
         </div>
       </div>
 
-      <div class="section-title">Pending Access Requests</div>
-      <div id="requestList" class="request-list">
-        <div class="request-empty">No pending requests</div>
+      <div class="session-sections">
+        <section class="section">
+          <div class="section-title">Waiting Requests</div>
+          <div id="waitingList" class="session-list"></div>
+        </section>
+        <section class="section">
+          <div class="section-title">Active Chats</div>
+          <div id="activeList" class="session-list"></div>
+        </section>
+        <section class="section">
+          <div class="section-title">Closed Chats</div>
+          <div id="closedList" class="session-list"></div>
+        </section>
       </div>
+    </aside>
 
-      <div id="error" class="error"></div>
-    </div>
+    <section class="conversation">
+      <header class="conversation-header">
+        <div class="conversation-title">
+          <h2 id="conversationName">Select a conversation</h2>
+          <p id="conversationMeta">No session selected</p>
+        </div>
+        <span id="conversationStatus" class="status-pill status-waiting">Waiting</span>
+      </header>
+      <div id="messages" class="message-list">
+        <div class="empty-state">Select a conversation</div>
+      </div>
+      <div id="typingIndicator" class="typing"></div>
+      <div class="composer">
+        <label id="uploadLabel" class="upload-label" for="imageInput">Photo</label>
+        <input id="imageInput" type="file" accept="image/*" />
+        <input id="messageInput" type="text" autocomplete="off" placeholder="Message customer" />
+        <button id="sendMessage" class="send-btn" type="button">Send</button>
+      </div>
+    </section>
+
+    <aside class="details">
+      <div class="details-header">
+        <h2>Customer Details</h2>
+        <p id="detailSummary">No session selected</p>
+      </div>
+      <div class="details-body">
+        <div class="detail-block">
+          <div class="detail-label">Name</div>
+          <div id="detailName" class="detail-value">-</div>
+        </div>
+        <div class="detail-block">
+          <div class="detail-label">Email</div>
+          <div id="detailEmail" class="detail-value">-</div>
+        </div>
+        <div class="detail-block">
+          <div class="detail-label">Session ID</div>
+          <div id="detailSession" class="detail-value">-</div>
+        </div>
+        <div class="detail-block">
+          <div class="detail-label">Status</div>
+          <div id="detailStatus" class="detail-value">-</div>
+        </div>
+        <div class="detail-block">
+          <div class="detail-label">Joined Time</div>
+          <div id="detailJoined" class="detail-value">-</div>
+        </div>
+        <div class="detail-block">
+          <div class="detail-label">Last Activity</div>
+          <div id="detailActivity" class="detail-value">-</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="approveBtn" class="approve" type="button">Approve</button>
+        <button id="rejectBtn" class="reject" type="button">Reject</button>
+        <button id="closeBtn" class="close" type="button">Close Chat</button>
+        <button id="transcriptBtn" class="secondary" type="button">Save Transcript</button>
+        <div id="error" class="error"></div>
+      </div>
+    </aside>
   </main>
 
+  <div id="imageModal" class="image-modal">
+    <img id="modalImage" src="" alt="Expanded image" />
+  </div>
+
   <script>
-    const createButton = document.getElementById('createSession');
-    const result = document.getElementById('result');
+    const agentUsername = {{ agent_username|default('', true)|tojson }};
+    const socket = io();
+    const sessions = new Map();
+    const messagesBySession = new Map();
+
+    let selectedSessionId = null;
+    let typingTimer = null;
+
+    const waitingList = document.getElementById('waitingList');
+    const activeList = document.getElementById('activeList');
+    const closedList = document.getElementById('closedList');
+    const createSessionBtn = document.getElementById('createSession');
+    const generatedLink = document.getElementById('generatedLink');
     const sessionLink = document.getElementById('sessionLink');
     const openLink = document.getElementById('openLink');
     const copyLink = document.getElementById('copyLink');
-    const requestList = document.getElementById('requestList');
-    const error = document.getElementById('error');
-    const agentUsername = {{ agent_username|default('', true)|tojson }};
-    const supportSocket = io();
-    const pendingRequests = new Map();
+    const conversationName = document.getElementById('conversationName');
+    const conversationMeta = document.getElementById('conversationMeta');
+    const conversationStatus = document.getElementById('conversationStatus');
+    const messagesEl = document.getElementById('messages');
+    const typingIndicator = document.getElementById('typingIndicator');
+    const uploadLabel = document.getElementById('uploadLabel');
+    const imageInput = document.getElementById('imageInput');
+    const messageInput = document.getElementById('messageInput');
+    const sendMessageBtn = document.getElementById('sendMessage');
+    const approveBtn = document.getElementById('approveBtn');
+    const rejectBtn = document.getElementById('rejectBtn');
+    const closeBtn = document.getElementById('closeBtn');
+    const transcriptBtn = document.getElementById('transcriptBtn');
+    const errorEl = document.getElementById('error');
+    const imageModal = document.getElementById('imageModal');
+    const modalImage = document.getElementById('modalImage');
 
-    supportSocket.on('connect', () => {
-      supportSocket.emit('agent_authenticate', {
-        username: agentUsername
+    const detailSummary = document.getElementById('detailSummary');
+    const detailName = document.getElementById('detailName');
+    const detailEmail = document.getElementById('detailEmail');
+    const detailSession = document.getElementById('detailSession');
+    const detailStatus = document.getElementById('detailStatus');
+    const detailJoined = document.getElementById('detailJoined');
+    const detailActivity = document.getElementById('detailActivity');
+
+    socket.on('connect', () => {
+      socket.emit('agent_authenticate', { username: agentUsername });
+    });
+
+    socket.on('agent_authenticated', () => {
+      socket.emit('agent_join_dashboard');
+      loadSessions();
+    });
+
+    socket.on('dashboard_sessions', (data) => {
+      if (!data || !Array.isArray(data.sessions)) return;
+
+      sessions.clear();
+      data.sessions.forEach((session) => {
+        sessions.set(session.session_id, session);
       });
+      renderSessions();
+      renderSelected();
     });
 
-    supportSocket.on('agent_authenticated', () => {
-      supportSocket.emit('agent_ready');
-    });
+    socket.on('session_updated', (data) => {
+      if (!data || !data.session) return;
 
-    supportSocket.on('pending_join_requests', (data) => {
-      pendingRequests.clear();
-      if (data && Array.isArray(data.requests)) {
-        data.requests.forEach(addPendingRequest);
+      sessions.set(data.session.session_id, data.session);
+      renderSessions();
+      if (selectedSessionId === data.session.session_id) {
+        renderSelected();
       }
-      renderRequests();
     });
 
-    supportSocket.on('join_request', (request) => {
-      addPendingRequest(request);
-      renderRequests();
+    socket.on('session_messages', (data) => {
+      if (!data || !data.session_id || !Array.isArray(data.messages)) return;
+
+      messagesBySession.set(data.session_id, data.messages);
+      if (selectedSessionId === data.session_id) {
+        renderMessages();
+      }
     });
 
-    supportSocket.on('join_request_removed', (request) => {
-      if (!request) return;
+    socket.on('chat_message', (message) => {
+      if (!message || !message.session_id) return;
 
-      pendingRequests.delete(requestKey(request));
-      renderRequests();
+      const sessionMessages = messagesBySession.get(message.session_id) || [];
+      sessionMessages.push(message);
+      messagesBySession.set(message.session_id, sessionMessages);
+
+      if (selectedSessionId === message.session_id) {
+        renderMessages();
+      }
     });
 
-    supportSocket.on('agent_error', (data) => {
-      error.textContent = (data && data.error) || 'Unable to process agent request';
+    socket.on('typing', (data) => {
+      if (!data || data.session_id !== selectedSessionId || data.user === agentUsername) return;
+
+      typingIndicator.textContent = data.typing ? `${data.user || 'Customer'} is typing...` : '';
     });
 
-    createButton.addEventListener('click', async () => {
-      createButton.disabled = true;
-      error.textContent = '';
+    socket.on('session_closed', (data) => {
+      if (!data || data.room !== selectedSessionId) return;
+
+      typingIndicator.textContent = '';
+    });
+
+    socket.on('agent_error', (data) => {
+      showError((data && data.error) || 'Unable to process agent request');
+    });
+
+    createSessionBtn.addEventListener('click', createSession);
+    copyLink.addEventListener('click', copyCustomerLink);
+    sendMessageBtn.addEventListener('click', sendTextMessage);
+    approveBtn.addEventListener('click', approveSelected);
+    rejectBtn.addEventListener('click', rejectSelected);
+    closeBtn.addEventListener('click', closeSelected);
+    transcriptBtn.addEventListener('click', saveTranscript);
+
+    messageInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        sendTextMessage();
+      }
+    });
+
+    messageInput.addEventListener('input', () => {
+      const session = getSelectedSession();
+      if (!session || session.status !== 'active') return;
+
+      socket.emit('typing', {
+        session_id: session.session_id,
+        user: agentUsername || 'Agent',
+        typing: true,
+      });
+      clearTimeout(typingTimer);
+      typingTimer = setTimeout(() => {
+        socket.emit('typing', {
+          session_id: session.session_id,
+          user: agentUsername || 'Agent',
+          typing: false,
+        });
+      }, 900);
+    });
+
+    imageInput.addEventListener('change', async () => {
+      const file = imageInput.files[0];
+      if (!file) return;
+
+      try {
+        await uploadImage(file);
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        imageInput.value = '';
+      }
+    });
+
+    imageModal.addEventListener('click', () => {
+      imageModal.style.display = 'none';
+      modalImage.src = '';
+    });
+
+    async function loadSessions() {
+      try {
+        const response = await fetch('/api/sessions');
+        if (response.redirected) {
+          window.location.href = response.url;
+          return;
+        }
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'Unable to load sessions');
+        }
+
+        sessions.clear();
+        data.sessions.forEach((session) => sessions.set(session.session_id, session));
+        renderSessions();
+        renderSelected();
+      } catch (err) {
+        showError(err.message);
+      }
+    }
+
+    async function createSession() {
+      createSessionBtn.disabled = true;
+      showError('');
 
       try {
         const response = await fetch('/create-session', { method: 'POST' });
@@ -302,7 +860,6 @@
         }
 
         const data = await response.json();
-
         if (!response.ok) {
           throw new Error(data.error || 'Unable to create session');
         }
@@ -311,15 +868,16 @@
         sessionLink.href = absoluteLink;
         sessionLink.textContent = absoluteLink;
         openLink.href = absoluteLink;
-        result.classList.add('visible');
+        generatedLink.classList.add('visible');
+        await loadSessions();
       } catch (err) {
-        error.textContent = err.message;
+        showError(err.message);
       } finally {
-        createButton.disabled = false;
+        createSessionBtn.disabled = false;
       }
-    });
+    }
 
-    copyLink.addEventListener('click', async () => {
+    async function copyCustomerLink() {
       if (!sessionLink.href) return;
 
       await navigator.clipboard.writeText(sessionLink.href);
@@ -327,74 +885,344 @@
       setTimeout(() => {
         copyLink.textContent = 'Copy';
       }, 1200);
-    });
-
-    function addPendingRequest(request) {
-      if (!request || !request.room || !request.customerSocketId) return;
-
-      pendingRequests.set(requestKey(request), request);
     }
 
-    function requestKey(request) {
-      return `${request.room}:${request.customerSocketId}`;
+    function renderSessions() {
+      renderSessionGroup(waitingList, 'waiting');
+      renderSessionGroup(activeList, 'active');
+      renderSessionGroup(closedList, 'closed');
     }
 
-    function renderRequests() {
-      requestList.textContent = '';
+    function renderSessionGroup(container, status) {
+      container.textContent = '';
 
-      if (!pendingRequests.size) {
+      const group = Array.from(sessions.values())
+        .filter((session) => session.status === status)
+        .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+
+      if (!group.length) {
         const empty = document.createElement('div');
-        empty.className = 'request-empty';
-        empty.textContent = 'No pending requests';
-        requestList.appendChild(empty);
+        empty.className = 'empty-list';
+        empty.textContent = 'None';
+        container.appendChild(empty);
         return;
       }
 
-      pendingRequests.forEach((request) => {
-        const item = document.createElement('div');
-        item.className = 'request-item';
-
-        const name = document.createElement('div');
-        name.className = 'request-name';
-        name.textContent = request.name || 'Guest';
-
-        const meta = document.createElement('div');
-        meta.className = 'request-meta';
-        meta.textContent = `Email: ${request.email || 'Not provided'} | Session: ${request.room}`;
-
-        const actions = document.createElement('div');
-        actions.className = 'request-actions';
-
-        const approve = document.createElement('button');
-        approve.className = 'approve-btn';
-        approve.type = 'button';
-        approve.textContent = 'Approve';
-        approve.addEventListener('click', () => {
-          supportSocket.emit('approve_join', {
-            room: request.room,
-            customerSocketId: request.customerSocketId
-          });
-        });
-
-        const reject = document.createElement('button');
-        reject.className = 'reject-btn';
-        reject.type = 'button';
-        reject.textContent = 'Reject';
-        reject.addEventListener('click', () => {
-          supportSocket.emit('reject_join', {
-            room: request.room,
-            customerSocketId: request.customerSocketId
-          });
-        });
-
-        actions.appendChild(approve);
-        actions.appendChild(reject);
-        item.appendChild(name);
-        item.appendChild(meta);
-        item.appendChild(actions);
-        requestList.appendChild(item);
+      group.forEach((session) => {
+        container.appendChild(createSessionItem(session));
       });
     }
+
+    function createSessionItem(session) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'session-item';
+      if (session.session_id === selectedSessionId) {
+        item.classList.add('selected');
+      }
+
+      const topLine = document.createElement('div');
+      topLine.className = 'session-topline';
+
+      const name = document.createElement('div');
+      name.className = 'session-name';
+      name.textContent = session.customer_name || 'Waiting for customer';
+
+      const time = document.createElement('div');
+      time.className = 'session-time';
+      time.textContent = formatTime(session.updated_at);
+
+      topLine.appendChild(name);
+      topLine.appendChild(time);
+
+      const preview = document.createElement('div');
+      preview.className = 'session-preview';
+      preview.textContent = session.last_message || 'No messages yet';
+
+      const meta = document.createElement('div');
+      meta.className = 'session-meta';
+
+      const status = document.createElement('span');
+      status.className = `status-pill status-${session.status}`;
+      status.textContent = session.status;
+      meta.appendChild(status);
+
+      if (session.unread_count > 0) {
+        const badge = document.createElement('span');
+        badge.className = 'unread-badge';
+        badge.textContent = session.unread_count > 99 ? '99+' : String(session.unread_count);
+        meta.appendChild(badge);
+      }
+
+      item.appendChild(topLine);
+      item.appendChild(preview);
+      item.appendChild(meta);
+      item.addEventListener('click', () => selectSession(session.session_id));
+      return item;
+    }
+
+    async function selectSession(sessionId) {
+      selectedSessionId = sessionId;
+      typingIndicator.textContent = '';
+      renderSessions();
+      renderSelected();
+      socket.emit('agent_join_session', { session_id: sessionId });
+      await loadMessages(sessionId);
+    }
+
+    async function loadMessages(sessionId) {
+      try {
+        const response = await fetch(`/api/session/${encodeURIComponent(sessionId)}/messages`);
+        if (response.redirected) {
+          window.location.href = response.url;
+          return;
+        }
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'Unable to load messages');
+        }
+
+        messagesBySession.set(sessionId, data.messages || []);
+        if (selectedSessionId === sessionId) {
+          renderMessages();
+        }
+      } catch (err) {
+        showError(err.message);
+      }
+    }
+
+    function renderSelected() {
+      const session = getSelectedSession();
+
+      if (!session) {
+        conversationName.textContent = 'Select a conversation';
+        conversationMeta.textContent = 'No session selected';
+        conversationStatus.textContent = 'Waiting';
+        conversationStatus.className = 'status-pill status-waiting';
+        detailSummary.textContent = 'No session selected';
+        detailName.textContent = '-';
+        detailEmail.textContent = '-';
+        detailSession.textContent = '-';
+        detailStatus.textContent = '-';
+        detailJoined.textContent = '-';
+        detailActivity.textContent = '-';
+        renderEmptyMessages();
+        setComposerEnabled(false);
+        setActionStates(null);
+        return;
+      }
+
+      conversationName.textContent = session.customer_name || 'Waiting for customer';
+      conversationMeta.textContent = session.customer_email || session.session_id;
+      conversationStatus.textContent = session.status;
+      conversationStatus.className = `status-pill status-${session.status}`;
+
+      detailSummary.textContent = session.customer_email || session.session_id;
+      detailName.textContent = session.customer_name || 'Waiting for customer';
+      detailEmail.textContent = session.customer_email || '-';
+      detailSession.textContent = session.session_id;
+      detailStatus.textContent = session.status;
+      detailJoined.textContent = formatDateTime(session.joined_at);
+      detailActivity.textContent = formatDateTime(session.updated_at);
+
+      setComposerEnabled(session.status === 'active');
+      setActionStates(session);
+      renderMessages();
+    }
+
+    function renderMessages() {
+      const session = getSelectedSession();
+      if (!session) {
+        renderEmptyMessages();
+        return;
+      }
+
+      const sessionMessages = messagesBySession.get(session.session_id) || [];
+      messagesEl.textContent = '';
+
+      if (!sessionMessages.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        empty.textContent = session.status === 'waiting' ? 'Waiting for approval' : 'No messages yet';
+        messagesEl.appendChild(empty);
+        return;
+      }
+
+      sessionMessages.forEach((message) => {
+        messagesEl.appendChild(createMessageElement(message));
+      });
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function renderEmptyMessages() {
+      messagesEl.textContent = '';
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = 'Select a conversation';
+      messagesEl.appendChild(empty);
+    }
+
+    function createMessageElement(message) {
+      const item = document.createElement('div');
+      const isSystem = message.type === 'system';
+      const isAgent = message.user === agentUsername || message.user === 'Agent test';
+      item.className = `message ${isSystem ? 'system' : isAgent ? 'agent' : 'customer'}`;
+
+      const meta = document.createElement('div');
+      meta.className = 'message-meta';
+      meta.textContent = `${message.user || 'User'} - ${formatTime(message.timestamp)}`;
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+
+      if (message.type === 'image' && message.url) {
+        const image = document.createElement('img');
+        image.src = message.url;
+        image.alt = 'Uploaded image';
+        image.addEventListener('click', () => {
+          modalImage.src = message.url;
+          imageModal.style.display = 'flex';
+        });
+        bubble.appendChild(image);
+      } else {
+        bubble.textContent = message.text || '';
+      }
+
+      item.appendChild(meta);
+      item.appendChild(bubble);
+      return item;
+    }
+
+    function setComposerEnabled(enabled) {
+      messageInput.disabled = !enabled;
+      sendMessageBtn.disabled = !enabled;
+      imageInput.disabled = !enabled;
+      uploadLabel.classList.toggle('disabled', !enabled);
+    }
+
+    function setActionStates(session) {
+      const hasSession = Boolean(session);
+      approveBtn.disabled = !hasSession || session.status !== 'waiting' || !session.customer_socket_id;
+      rejectBtn.disabled = !hasSession || session.status !== 'waiting' || !session.customer_socket_id;
+      closeBtn.disabled = !hasSession || session.status !== 'active';
+      transcriptBtn.disabled = !hasSession;
+    }
+
+    function approveSelected() {
+      const session = getSelectedSession();
+      if (!session || !session.customer_socket_id) return;
+
+      socket.emit('approve_join', {
+        room: session.session_id,
+        customerSocketId: session.customer_socket_id,
+      });
+    }
+
+    function rejectSelected() {
+      const session = getSelectedSession();
+      if (!session || !session.customer_socket_id) return;
+
+      socket.emit('reject_join', {
+        room: session.session_id,
+        customerSocketId: session.customer_socket_id,
+      });
+    }
+
+    function closeSelected() {
+      const session = getSelectedSession();
+      if (!session) return;
+
+      socket.emit('close_session', {
+        room: session.session_id,
+        user: agentUsername || 'Agent',
+      });
+    }
+
+    function saveTranscript() {
+      const session = getSelectedSession();
+      if (!session) return;
+
+      window.location.href = `/download-transcript/${encodeURIComponent(session.session_id)}`;
+    }
+
+    function sendTextMessage() {
+      const session = getSelectedSession();
+      if (!session || session.status !== 'active') return;
+
+      const text = messageInput.value.trim();
+      if (!text) return;
+
+      socket.emit('chat_message', {
+        session_id: session.session_id,
+        type: 'text',
+        user: agentUsername || 'Agent',
+        text,
+        timestamp: new Date().toISOString(),
+      });
+      messageInput.value = '';
+      typingIndicator.textContent = '';
+      socket.emit('typing', {
+        session_id: session.session_id,
+        user: agentUsername || 'Agent',
+        typing: false,
+      });
+    }
+
+    async function uploadImage(file) {
+      const session = getSelectedSession();
+      if (!session || session.status !== 'active') return;
+
+      const formData = new FormData();
+      formData.append('image', file);
+
+      const response = await fetch('/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Image upload failed');
+      }
+
+      socket.emit('chat_message', {
+        session_id: session.session_id,
+        type: 'image',
+        user: agentUsername || 'Agent',
+        url: data.url,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    function getSelectedSession() {
+      return selectedSessionId ? sessions.get(selectedSessionId) : null;
+    }
+
+    function formatTime(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return '';
+      return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
+
+    function formatDateTime(value) {
+      if (!value) return '-';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return '-';
+      return date.toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    }
+
+    function showError(message) {
+      errorEl.textContent = message || '';
+    }
+
+    renderSelected();
   </script>
 </body>
 </html>

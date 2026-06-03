@@ -36,6 +36,7 @@ DEFAULT_SESSION_ID = "lobby"
 AGENT_DASHBOARD_ROOM = "agent_dashboard"
 active_sessions = {DEFAULT_SESSION_ID}
 closed_sessions = set()
+session_records = {}
 sid_sessions = {}
 pending_join_requests = {}
 approved_customer_sids = {}
@@ -118,6 +119,8 @@ def agent_logout():
 def create_session():
     session_id = secrets.token_urlsafe(24)
     active_sessions.add(session_id)
+    ensure_session_record(session_id, agent_name=session.get("agent_username", ""))
+    emit_session_updated(session_id)
     return jsonify({
         "session_id": session_id,
         "link": url_for("chat_session", session_id=session_id)
@@ -154,6 +157,33 @@ def download_transcript(session_id):
     )
 
 
+@app.route("/api/sessions")
+@require_agent_login
+def api_sessions():
+    return jsonify({
+        "sessions": [
+            serialize_session(session_id)
+            for session_id in active_sessions
+            if session_id != DEFAULT_SESSION_ID
+        ]
+    })
+
+
+@app.route("/api/session/<session_id>/messages")
+@require_agent_login
+def api_session_messages(session_id):
+    if session_id not in active_sessions:
+        abort(404)
+
+    return jsonify({
+        "session_id": session_id,
+        "messages": [
+            serialize_message(message, session_id)
+            for message in chat_transcripts.get(session_id, [])
+        ]
+    })
+
+
 @app.route("/upload", methods=["POST"])
 def upload():
     file = request.files.get("image")
@@ -176,6 +206,13 @@ def handle_agent_ready():
         emit("agent_error", {"error": "Agent login required"})
         return
 
+    emit("dashboard_sessions", {
+        "sessions": [
+            serialize_session(session_id)
+            for session_id in active_sessions
+            if session_id != DEFAULT_SESSION_ID
+        ]
+    })
     emit("pending_join_requests", {
         "requests": [
             request_payload(room, join_request)
@@ -194,6 +231,47 @@ def handle_agent_authenticate(data):
 
     emit("agent_authenticated", {
         "username": session.get("agent_username", "")
+    })
+
+
+@socketio.on("agent_join_dashboard")
+def handle_agent_join_dashboard(data=None):
+    if not authenticate_agent_socket():
+        emit("agent_error", {"error": "Agent login required"})
+        return
+
+    emit("dashboard_sessions", {
+        "sessions": [
+            serialize_session(session_id)
+            for session_id in active_sessions
+            if session_id != DEFAULT_SESSION_ID
+        ]
+    })
+
+
+@socketio.on("agent_join_session")
+def handle_agent_join_session(data):
+    if not is_authenticated_agent_socket():
+        emit("agent_error", {"error": "Agent login required"})
+        return
+
+    room = get_room_from_payload(data)
+    if not room or room == DEFAULT_SESSION_ID:
+        emit("agent_error", {"error": "Invalid session"})
+        return
+
+    socket_join_room(room)
+    sid_sessions[request.sid] = room
+    session_record = ensure_session_record(room)
+    session_record["unread_count"] = 0
+    touch_session(room)
+    emit_session_updated(room)
+    emit("session_messages", {
+        "session_id": room,
+        "messages": [
+            serialize_message(message, room)
+            for message in chat_transcripts.get(room, [])
+        ]
     })
 
 
@@ -237,12 +315,22 @@ def handle_request_join(data):
         "email": email,
     }
     pending_join_requests.setdefault(room, []).append(join_request)
+    session_record = ensure_session_record(room)
+    session_record.update({
+        "customer_name": name,
+        "customer_email": email,
+        "status": "waiting",
+        "customer_socket_id": request.sid,
+        "last_message": "Waiting for approval",
+        "updated_at": utc_now_iso(),
+    })
 
     emit("join_pending", {
         "room": room,
         "text": "Waiting for agent approval..."
     })
     emit("join_request", request_payload(room, join_request), to=AGENT_DASHBOARD_ROOM)
+    emit_session_updated(room)
 
 
 @socketio.on("approve_join")
@@ -292,6 +380,16 @@ def handle_approve_join(data):
         "name": join_request["name"],
         "email": join_request["email"],
     }
+    session_record = ensure_session_record(room)
+    session_record.update({
+        "customer_name": join_request["name"],
+        "customer_email": join_request["email"],
+        "status": "active",
+        "agent_name": session.get("agent_username", ""),
+        "joined_at": utc_now_iso(),
+        "customer_socket_id": customer_sid,
+        "unread_count": 0,
+    })
 
     emit("join_approved", {
         "room": room,
@@ -307,6 +405,7 @@ def handle_approve_join(data):
     )
     append_transcript_message(room, system_message)
     emit("chat_message", system_message, to=room)
+    emit_session_updated(room)
 
 
 @socketio.on("reject_join")
@@ -325,6 +424,17 @@ def handle_reject_join(data):
         room,
         make_system_message(room, f"Customer rejected: {join_request['name']}."),
     )
+    session_record = ensure_session_record(room)
+    session_record.update({
+        "customer_name": join_request["name"],
+        "customer_email": join_request["email"],
+        "status": "closed",
+        "agent_name": session.get("agent_username", ""),
+        "customer_socket_id": None,
+        "last_message": f"Rejected {join_request['name']}",
+        "updated_at": utc_now_iso(),
+    })
+    closed_sessions.add(room)
     emit("join_rejected", {
         "room": room,
         "text": "Your request was not approved."
@@ -333,6 +443,7 @@ def handle_reject_join(data):
         "room": room,
         "customerSocketId": customer_sid
     }, to=AGENT_DASHBOARD_ROOM)
+    emit_session_updated(room)
 
 
 @socketio.on("rejoin_session")
@@ -370,11 +481,17 @@ def handle_rejoin_session(data):
     approved_customer_sids[request.sid] = room
     approved_customer_by_room[room] = request.sid
     approved_customer_tokens[room]["sid"] = request.sid
+    session_record = ensure_session_record(room)
+    session_record.update({
+        "status": "active",
+        "customer_socket_id": request.sid,
+    })
 
     emit("rejoin_approved", {"room": room})
     system_message = make_system_message(room, "Customer rejoined the chat.")
     append_transcript_message(room, system_message)
     emit("chat_message", system_message, to=room)
+    emit_session_updated(room)
 
 
 @socketio.on("chat_message")
@@ -383,8 +500,9 @@ def handle_chat_message(msg):
     if not room or room in closed_sessions:
         return
 
-    append_transcript_message(room, msg)
+    append_transcript_message(room, msg, increment_unread=not is_authenticated_agent_socket())
     emit("chat_message", msg, to=room)
+    emit_session_updated(room)
 
 
 @socketio.on("join_room")
@@ -437,11 +555,18 @@ def handle_close_session(data):
         room,
         make_system_message(room, f"Chat closed by {user}."),
     )
+    session_record = ensure_session_record(room)
+    session_record.update({
+        "status": "closed",
+        "customer_socket_id": approved_customer_by_room.get(room),
+        "updated_at": utc_now_iso(),
+    })
     emit("session_closed", {
         "room": room,
         "closed_by": user,
         "text": f"Chat closed by {user}."
     }, to=room)
+    emit_session_updated(room)
 
 
 @socketio.on("disconnect")
@@ -499,11 +624,11 @@ def make_system_message(room, text):
         "type": "system",
         "user": "System",
         "text": text,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": utc_now_iso(),
     }
 
 
-def append_transcript_message(room, message):
+def append_transcript_message(room, message, increment_unread=False):
     if room not in active_sessions or not isinstance(message, dict):
         return
 
@@ -529,6 +654,95 @@ def append_transcript_message(room, message):
         entry["url"] = url.strip()
 
     chat_transcripts.setdefault(room, []).append(entry)
+    update_session_from_message(room, entry, increment_unread=increment_unread)
+
+
+def ensure_session_record(session_id, agent_name=""):
+    if session_id in session_records:
+        return session_records[session_id]
+
+    now = utc_now_iso()
+    session_records[session_id] = {
+        "session_id": session_id,
+        "customer_name": "",
+        "customer_email": "",
+        "status": "waiting",
+        "agent_name": agent_name,
+        "created_at": now,
+        "updated_at": now,
+        "joined_at": None,
+        "last_message": "Session link created",
+        "unread_count": 0,
+        "customer_socket_id": None,
+    }
+    return session_records[session_id]
+
+
+def update_session_from_message(room, message, increment_unread=False):
+    session_record = ensure_session_record(room)
+    session_record["last_message"] = message_preview(message)
+    session_record["updated_at"] = message.get("timestamp") or utc_now_iso()
+    if room in closed_sessions:
+        session_record["status"] = "closed"
+    elif session_record.get("status") != "waiting":
+        session_record["status"] = "active"
+    if increment_unread and message.get("type") != "system":
+        session_record["unread_count"] = session_record.get("unread_count", 0) + 1
+
+
+def touch_session(room):
+    ensure_session_record(room)["updated_at"] = utc_now_iso()
+
+
+def emit_session_updated(room):
+    if room == DEFAULT_SESSION_ID or room not in active_sessions:
+        return
+
+    socketio.emit(
+        "session_updated",
+        {"session": serialize_session(room)},
+        to=AGENT_DASHBOARD_ROOM,
+    )
+
+
+def serialize_session(session_id):
+    session_record = ensure_session_record(session_id)
+    return {
+        "session_id": session_record["session_id"],
+        "customer_name": session_record.get("customer_name") or "Waiting for customer",
+        "customer_email": session_record.get("customer_email", ""),
+        "status": "closed" if session_id in closed_sessions else session_record.get("status", "waiting"),
+        "agent_name": session_record.get("agent_name", ""),
+        "created_at": session_record.get("created_at"),
+        "updated_at": session_record.get("updated_at"),
+        "joined_at": session_record.get("joined_at"),
+        "last_message": session_record.get("last_message", ""),
+        "unread_count": session_record.get("unread_count", 0),
+        "customer_socket_id": session_record.get("customer_socket_id"),
+        "link": url_for("chat_session", session_id=session_id),
+    }
+
+
+def serialize_message(message, session_id):
+    return {
+        "session_id": session_id,
+        "type": message.get("type", "text"),
+        "user": message.get("user", "User"),
+        "text": message.get("text", ""),
+        "url": message.get("url", ""),
+        "timestamp": message.get("timestamp") or utc_now_iso(),
+    }
+
+
+def message_preview(message):
+    if message.get("type") == "image":
+        return "Image uploaded"
+
+    return (message.get("text") or "").strip()[:140]
+
+
+def utc_now_iso():
+    return datetime.utcnow().isoformat() + "Z"
 
 
 def build_transcript(room):
