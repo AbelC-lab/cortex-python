@@ -781,6 +781,8 @@
     const sessions = new Map();
     const messagesBySession = new Map();
     const agentProfilePicKey = 'cortex_agent_profile_pic';
+    const workspaceStateKey = 'cortex_agent_workspace_state';
+    const workspaceState = loadWorkspaceState();
 
     let selectedSessionId = null;
     let typingTimer = null;
@@ -791,6 +793,7 @@
     const closedList = document.getElementById('closedList');
     const createSessionBtn = document.getElementById('createSession');
     const generatedLink = document.getElementById('generatedLink');
+    const sessionSections = document.querySelector('.session-sections');
     const sessionLink = document.getElementById('sessionLink');
     const openLink = document.getElementById('openLink');
     const copyLink = document.getElementById('copyLink');
@@ -829,7 +832,7 @@
 
     socket.on('agent_authenticated', () => {
       socket.emit('agent_join_dashboard');
-      loadSessions();
+      resumeWorkspace();
     });
 
     socket.on('dashboard_sessions', (data) => {
@@ -840,6 +843,7 @@
         sessions.set(session.session_id, session);
       });
       renderSessions();
+      restoreSelectedSession();
       renderSelected();
     });
 
@@ -923,6 +927,7 @@
       const session = getSelectedSession();
       if (!session || session.status !== 'active') return;
 
+      saveDraft(session.session_id, messageInput.value);
       socket.emit('typing', {
         session_id: session.session_id,
         user: agentUsername || 'Agent',
@@ -956,6 +961,19 @@
       modalImage.src = '';
     });
 
+    sessionSections.addEventListener('scroll', () => {
+      workspaceState.panelState.sidebarScroll = sessionSections.scrollTop;
+      saveWorkspaceState();
+    });
+
+    window.addEventListener('beforeunload', () => {
+      const session = getSelectedSession();
+      if (session) {
+        saveDraft(session.session_id, messageInput.value);
+      }
+      saveWorkspaceState();
+    });
+
     async function loadSessions() {
       try {
         const response = await fetch('/api/sessions');
@@ -972,10 +990,78 @@
         sessions.clear();
         data.sessions.forEach((session) => sessions.set(session.session_id, session));
         renderSessions();
+        restoreSelectedSession();
         renderSelected();
       } catch (err) {
         showError(err.message);
       }
+    }
+
+    async function resumeWorkspace() {
+      restoreWorkspaceShell();
+      await loadSessions();
+      if (selectedSessionId && sessions.has(selectedSessionId)) {
+        socket.emit('agent_join_session', { session_id: selectedSessionId });
+        await loadMessages(selectedSessionId);
+      }
+    }
+
+    function loadWorkspaceState() {
+      try {
+        return {
+          selectedSessionId: null,
+          drafts: {},
+          generatedLink: null,
+          panelState: {
+            sidebarScroll: 0,
+          },
+          ...JSON.parse(localStorage.getItem(workspaceStateKey) || '{}'),
+        };
+      } catch (err) {
+        return {
+          selectedSessionId: null,
+          drafts: {},
+          generatedLink: null,
+          panelState: {
+            sidebarScroll: 0,
+          },
+        };
+      }
+    }
+
+    function saveWorkspaceState() {
+      localStorage.setItem(workspaceStateKey, JSON.stringify(workspaceState));
+    }
+
+    function restoreWorkspaceShell() {
+      if (workspaceState.generatedLink && workspaceState.generatedLink.href) {
+        sessionLink.href = workspaceState.generatedLink.href;
+        sessionLink.textContent = workspaceState.generatedLink.href;
+        openLink.href = workspaceState.generatedLink.href;
+        generatedLink.classList.add('visible');
+      }
+
+      requestAnimationFrame(() => {
+        sessionSections.scrollTop = workspaceState.panelState.sidebarScroll || 0;
+      });
+    }
+
+    function restoreSelectedSession() {
+      if (selectedSessionId && sessions.has(selectedSessionId)) return;
+
+      if (workspaceState.selectedSessionId && sessions.has(workspaceState.selectedSessionId)) {
+        selectedSessionId = workspaceState.selectedSessionId;
+        return;
+      }
+
+      selectedSessionId = null;
+    }
+
+    function saveDraft(sessionId, value) {
+      if (!sessionId) return;
+
+      workspaceState.drafts[sessionId] = value;
+      saveWorkspaceState();
     }
 
     async function createSession() {
@@ -999,6 +1085,8 @@
         sessionLink.textContent = absoluteLink;
         openLink.href = absoluteLink;
         generatedLink.classList.add('visible');
+        workspaceState.generatedLink = { href: absoluteLink };
+        saveWorkspaceState();
         await loadSessions();
       } catch (err) {
         showError(err.message);
@@ -1166,7 +1254,14 @@
     }
 
     async function selectSession(sessionId) {
+      const currentSession = getSelectedSession();
+      if (currentSession) {
+        saveDraft(currentSession.session_id, messageInput.value);
+      }
+
       selectedSessionId = sessionId;
+      workspaceState.selectedSessionId = sessionId;
+      saveWorkspaceState();
       typingIndicator.textContent = '';
       renderSessions();
       renderSelected();
@@ -1237,6 +1332,7 @@
 
       setComposerEnabled(session.status === 'active');
       setActionStates(session);
+      messageInput.value = workspaceState.drafts[session.session_id] || '';
       renderMessages();
     }
 
@@ -1407,6 +1503,7 @@
         timestamp: new Date().toISOString(),
       });
       messageInput.value = '';
+      saveDraft(session.session_id, '');
       typingIndicator.textContent = '';
       socket.emit('typing', {
         session_id: session.session_id,

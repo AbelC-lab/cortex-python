@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import secrets
 import time
 from datetime import datetime, timedelta
@@ -22,6 +23,10 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "cortex-secret-key"
 app.config["UPLOAD_FOLDER"] = os.path.join("static", "uploads")
+app.config["DATABASE"] = os.environ.get(
+    "CORTEX_DATABASE",
+    os.path.join(os.path.dirname(__file__), "cortex.db"),
+)
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
@@ -289,7 +294,12 @@ def handle_request_join(data):
         })
         return
 
-    if room in approved_customer_by_room:
+    persisted_session = session_records.get(room, {})
+    has_persisted_customer = (
+        persisted_session.get("status") == "active"
+        and room in approved_customer_tokens
+    )
+    if room in approved_customer_by_room or has_persisted_customer:
         emit("join_rejected", {
             "room": room,
             "text": "This support session already has a customer."
@@ -381,6 +391,7 @@ def handle_approve_join(data):
         "email": join_request["email"],
         "profilePic": join_request.get("profilePic", ""),
     }
+    persist_approval(room)
     session_record = ensure_session_record(room)
     session_record.update({
         "customer_name": join_request["name"],
@@ -491,6 +502,7 @@ def handle_rejoin_session(data):
     if profile_pic:
         session_record["customer_profile_pic"] = profile_pic
         approved_customer_tokens[room]["profilePic"] = profile_pic
+        persist_approval(room)
     session_record.update({
         "status": "active",
         "customer_socket_id": request.sid,
@@ -711,6 +723,8 @@ def append_transcript_message(room, message, increment_unread=False):
 
     messages_by_session.setdefault(room, []).append(entry)
     update_session_from_message(room, entry, increment_unread=increment_unread)
+    persist_message(room, entry)
+    persist_session_record(room)
     return serialize_message(entry, room)
 
 
@@ -753,6 +767,7 @@ def ensure_session_record(session_id, agent_name=""):
         "unread_count": 0,
         "customer_socket_id": None,
     }
+    persist_session_record(session_id)
     return session_records[session_id]
 
 
@@ -770,12 +785,14 @@ def update_session_from_message(room, message, increment_unread=False):
 
 def touch_session(room):
     ensure_session_record(room)["updated_at"] = utc_now_iso()
+    persist_session_record(room)
 
 
 def emit_session_updated(room):
     if room == DEFAULT_SESSION_ID or room not in active_sessions:
         return
 
+    persist_session_record(room)
     socketio.emit(
         "session_updated",
         {"session": serialize_session(room)},
@@ -843,6 +860,231 @@ def message_role(message):
 
 def utc_now_iso():
     return datetime.utcnow().isoformat() + "Z"
+
+
+def get_db_connection():
+    connection = sqlite3.connect(app.config["DATABASE"])
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def init_database():
+    with get_db_connection() as db:
+        db.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id TEXT PRIMARY KEY,
+                customer_name TEXT DEFAULT '',
+                customer_email TEXT DEFAULT '',
+                customer_profile_pic TEXT DEFAULT '',
+                status TEXT DEFAULT 'waiting',
+                agent_name TEXT DEFAULT '',
+                created_at TEXT,
+                updated_at TEXT,
+                joined_at TEXT,
+                last_message TEXT DEFAULT '',
+                unread_count INTEGER DEFAULT 0,
+                customer_socket_id TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS customers (
+                session_id TEXT PRIMARY KEY,
+                name TEXT DEFAULT '',
+                email TEXT DEFAULT '',
+                profile_pic TEXT DEFAULT '',
+                updated_at TEXT,
+                FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                room TEXT NOT NULL,
+                role TEXT DEFAULT 'customer',
+                type TEXT NOT NULL,
+                user TEXT DEFAULT 'User',
+                profile_pic TEXT DEFAULT '',
+                text TEXT DEFAULT '',
+                url TEXT DEFAULT '',
+                timestamp TEXT,
+                FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS approvals (
+                session_id TEXT PRIMARY KEY,
+                token TEXT NOT NULL,
+                name TEXT DEFAULT '',
+                email TEXT DEFAULT '',
+                profile_pic TEXT DEFAULT '',
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+            );
+            """
+        )
+
+
+def load_persistent_state():
+    with get_db_connection() as db:
+        for row in db.execute("SELECT * FROM sessions"):
+            session_id = row["session_id"]
+            active_sessions.add(session_id)
+            if row["status"] == "closed":
+                closed_sessions.add(session_id)
+            session_records[session_id] = {
+                "session_id": session_id,
+                "customer_name": row["customer_name"] or "",
+                "customer_email": row["customer_email"] or "",
+                "customer_profile_pic": row["customer_profile_pic"] or "",
+                "status": row["status"] or "waiting",
+                "agent_name": row["agent_name"] or "",
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "joined_at": row["joined_at"],
+                "last_message": row["last_message"] or "",
+                "unread_count": row["unread_count"] or 0,
+                "customer_socket_id": None,
+            }
+
+        for row in db.execute("SELECT * FROM messages ORDER BY timestamp, rowid"):
+            message = {
+                "id": row["id"],
+                "room": row["room"],
+                "session_id": row["session_id"],
+                "role": row["role"],
+                "type": row["type"],
+                "user": row["user"] or "User",
+                "profilePic": row["profile_pic"] or "",
+                "text": row["text"] or "",
+                "url": row["url"] or "",
+                "timestamp": row["timestamp"],
+            }
+            messages_by_session.setdefault(row["session_id"], []).append(message)
+
+        for row in db.execute("SELECT * FROM approvals"):
+            approved_customer_tokens[row["session_id"]] = {
+                "token": row["token"],
+                "sid": None,
+                "name": row["name"] or "",
+                "email": row["email"] or "",
+                "profilePic": row["profile_pic"] or "",
+            }
+
+
+def persist_session_record(session_id):
+    if session_id == DEFAULT_SESSION_ID or session_id not in session_records:
+        return
+
+    session_record = session_records[session_id]
+    with get_db_connection() as db:
+        db.execute(
+            """
+            INSERT INTO sessions (
+                session_id, customer_name, customer_email, customer_profile_pic,
+                status, agent_name, created_at, updated_at, joined_at,
+                last_message, unread_count, customer_socket_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                customer_name=excluded.customer_name,
+                customer_email=excluded.customer_email,
+                customer_profile_pic=excluded.customer_profile_pic,
+                status=excluded.status,
+                agent_name=excluded.agent_name,
+                created_at=excluded.created_at,
+                updated_at=excluded.updated_at,
+                joined_at=excluded.joined_at,
+                last_message=excluded.last_message,
+                unread_count=excluded.unread_count,
+                customer_socket_id=excluded.customer_socket_id
+            """,
+            (
+                session_id,
+                session_record.get("customer_name", ""),
+                session_record.get("customer_email", ""),
+                session_record.get("customer_profile_pic", ""),
+                session_record.get("status", "waiting"),
+                session_record.get("agent_name", ""),
+                session_record.get("created_at"),
+                session_record.get("updated_at"),
+                session_record.get("joined_at"),
+                session_record.get("last_message", ""),
+                session_record.get("unread_count", 0),
+                session_record.get("customer_socket_id"),
+            ),
+        )
+        db.execute(
+            """
+            INSERT INTO customers (session_id, name, email, profile_pic, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                name=excluded.name,
+                email=excluded.email,
+                profile_pic=excluded.profile_pic,
+                updated_at=excluded.updated_at
+            """,
+            (
+                session_id,
+                session_record.get("customer_name", ""),
+                session_record.get("customer_email", ""),
+                session_record.get("customer_profile_pic", ""),
+                session_record.get("updated_at"),
+            ),
+        )
+
+
+def persist_message(room, message):
+    with get_db_connection() as db:
+        db.execute(
+            """
+            INSERT OR IGNORE INTO messages (
+                id, session_id, room, role, type, user,
+                profile_pic, text, url, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                message.get("id"),
+                room,
+                room,
+                message.get("role", "customer"),
+                message.get("type", "text"),
+                message.get("user", "User"),
+                message.get("profilePic", ""),
+                message.get("text", ""),
+                message.get("url", ""),
+                message.get("timestamp"),
+            ),
+        )
+
+
+def persist_approval(room):
+    approval = approved_customer_tokens.get(room)
+    if not approval:
+        return
+
+    now = utc_now_iso()
+    with get_db_connection() as db:
+        db.execute(
+            """
+            INSERT INTO approvals (
+                session_id, token, name, email, profile_pic, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                token=excluded.token,
+                name=excluded.name,
+                email=excluded.email,
+                profile_pic=excluded.profile_pic,
+                updated_at=excluded.updated_at
+            """,
+            (
+                room,
+                approval["token"],
+                approval.get("name", ""),
+                approval.get("email", ""),
+                approval.get("profilePic", ""),
+                now,
+                now,
+            ),
+        )
 
 
 def build_transcript(room):
@@ -967,6 +1209,10 @@ def find_pending_request(data):
             return room, customer_sid, join_request
 
     return room, customer_sid, None
+
+
+init_database()
+load_persistent_state()
 
 
 if __name__ == "__main__":
